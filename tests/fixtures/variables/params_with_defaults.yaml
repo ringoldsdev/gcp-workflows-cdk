@@ -1,0 +1,10 @@
+# Params with default values
+main:
+  params:
+    - name
+    - age: 25
+  steps:
+    - greet:
+        assign:
+          - greeting: '${"Hello, " + name}'
+          - next_year: ${age + 1}

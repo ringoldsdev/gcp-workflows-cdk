@@ -1,0 +1,2 @@
+- fail:
+    raise: "Something went wrong"

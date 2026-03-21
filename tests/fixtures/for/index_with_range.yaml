@@ -1,0 +1,9 @@
+- loop:
+    for:
+      value: i
+      index: idx
+      range: [1, 10]
+      steps:
+        - noop:
+            assign:
+              - x: ${i}

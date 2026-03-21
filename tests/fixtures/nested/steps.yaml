@@ -1,0 +1,12 @@
+- group_a:
+    steps:
+      - step1:
+          assign:
+            - x: 1
+      - step2:
+          assign:
+            - y: ${x + 1}
+- group_b:
+    steps:
+      - step3:
+          return: ${y}

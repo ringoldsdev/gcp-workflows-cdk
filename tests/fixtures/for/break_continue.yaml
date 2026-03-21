@@ -1,0 +1,19 @@
+- init:
+    assign:
+      - results: []
+- loop:
+    for:
+      value: item
+      in: [1, null, 3, "STOP", 5]
+      steps:
+        - skip_null:
+            switch:
+              - condition: ${item == null}
+                next: continue
+              - condition: ${item == "STOP"}
+                next: break
+        - collect:
+            assign:
+              - results: ${list.concat(results, [item])}
+- done:
+    return: ${results}

@@ -1,0 +1,6 @@
+# Return step references a variable
+- init:
+    assign:
+      - result: "done"
+- finish:
+    return: ${result}

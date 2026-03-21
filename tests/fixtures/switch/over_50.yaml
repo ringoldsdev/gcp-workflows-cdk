@@ -1,0 +1,104 @@
+- check:
+    switch:
+      - condition: ${x == 0}
+        next: step0
+      - condition: ${x == 1}
+        next: step1
+      - condition: ${x == 2}
+        next: step2
+      - condition: ${x == 3}
+        next: step3
+      - condition: ${x == 4}
+        next: step4
+      - condition: ${x == 5}
+        next: step5
+      - condition: ${x == 6}
+        next: step6
+      - condition: ${x == 7}
+        next: step7
+      - condition: ${x == 8}
+        next: step8
+      - condition: ${x == 9}
+        next: step9
+      - condition: ${x == 10}
+        next: step10
+      - condition: ${x == 11}
+        next: step11
+      - condition: ${x == 12}
+        next: step12
+      - condition: ${x == 13}
+        next: step13
+      - condition: ${x == 14}
+        next: step14
+      - condition: ${x == 15}
+        next: step15
+      - condition: ${x == 16}
+        next: step16
+      - condition: ${x == 17}
+        next: step17
+      - condition: ${x == 18}
+        next: step18
+      - condition: ${x == 19}
+        next: step19
+      - condition: ${x == 20}
+        next: step20
+      - condition: ${x == 21}
+        next: step21
+      - condition: ${x == 22}
+        next: step22
+      - condition: ${x == 23}
+        next: step23
+      - condition: ${x == 24}
+        next: step24
+      - condition: ${x == 25}
+        next: step25
+      - condition: ${x == 26}
+        next: step26
+      - condition: ${x == 27}
+        next: step27
+      - condition: ${x == 28}
+        next: step28
+      - condition: ${x == 29}
+        next: step29
+      - condition: ${x == 30}
+        next: step30
+      - condition: ${x == 31}
+        next: step31
+      - condition: ${x == 32}
+        next: step32
+      - condition: ${x == 33}
+        next: step33
+      - condition: ${x == 34}
+        next: step34
+      - condition: ${x == 35}
+        next: step35
+      - condition: ${x == 36}
+        next: step36
+      - condition: ${x == 37}
+        next: step37
+      - condition: ${x == 38}
+        next: step38
+      - condition: ${x == 39}
+        next: step39
+      - condition: ${x == 40}
+        next: step40
+      - condition: ${x == 41}
+        next: step41
+      - condition: ${x == 42}
+        next: step42
+      - condition: ${x == 43}
+        next: step43
+      - condition: ${x == 44}
+        next: step44
+      - condition: ${x == 45}
+        next: step45
+      - condition: ${x == 46}
+        next: step46
+      - condition: ${x == 47}
+        next: step47
+      - condition: ${x == 48}
+        next: step48
+      - condition: ${x == 49}
+        next: step49
+      - condition: ${x == 50}
+        next: step50

@@ -1,0 +1,58 @@
+- work:
+    parallel:
+      branches:
+        - b1:
+            steps:
+              - s:
+                  assign:
+                    - x: 1
+        - b2:
+            steps:
+              - s:
+                  assign:
+                    - x: 2
+        - b3:
+            steps:
+              - s:
+                  assign:
+                    - x: 3
+        - b4:
+            steps:
+              - s:
+                  assign:
+                    - x: 4
+        - b5:
+            steps:
+              - s:
+                  assign:
+                    - x: 5
+        - b6:
+            steps:
+              - s:
+                  assign:
+                    - x: 6
+        - b7:
+            steps:
+              - s:
+                  assign:
+                    - x: 7
+        - b8:
+            steps:
+              - s:
+                  assign:
+                    - x: 8
+        - b9:
+            steps:
+              - s:
+                  assign:
+                    - x: 9
+        - b10:
+            steps:
+              - s:
+                  assign:
+                    - x: 10
+        - b11:
+            steps:
+              - s:
+                  assign:
+                    - x: 11

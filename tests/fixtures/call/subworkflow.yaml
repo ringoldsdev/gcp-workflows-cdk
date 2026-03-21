@@ -1,0 +1,15 @@
+main:
+    steps:
+        - invoke:
+            call: my_helper
+            args:
+                x: 42
+            result: output
+        - done:
+            return: ${output}
+
+my_helper:
+    params: [x]
+    steps:
+        - compute:
+            return: ${x * 2}

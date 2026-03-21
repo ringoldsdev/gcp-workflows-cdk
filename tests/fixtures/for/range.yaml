@@ -1,0 +1,13 @@
+- init:
+    assign:
+      - total: 0
+- loop:
+    for:
+      value: i
+      range: [1, 10]
+      steps:
+        - add:
+            assign:
+              - total: ${total + i}
+- done:
+    return: ${total}

@@ -1,0 +1,14 @@
+# Switch with variable defined in ONLY SOME branches -- should warn
+- init:
+    assign:
+      - x: 10
+- decide:
+    switch:
+      - condition: ${x > 5}
+        assign:
+          - result: "big"
+      - condition: ${x <= 5}
+        next: end
+- use_result:
+    assign:
+      - output: ${result}

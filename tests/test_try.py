@@ -1,4 +1,3 @@
-import textwrap
 import pytest
 from pydantic import ValidationError
 
@@ -13,28 +12,12 @@ from cloud_workflows.models import (
     TryStepsBody,
     RetryConfig,
 )
+from conftest import parse_fixture
 
 
 def test_try_except_call():
     """VALID - try with single call body and except handler."""
-    yaml_str = textwrap.dedent("""\
-        - attempt:
-            try:
-              call: http.get
-              args:
-                url: https://example.com/might-fail
-              result: response
-            except:
-              as: e
-              steps:
-                - log:
-                    call: sys.log
-                    args:
-                      data: ${e.message}
-                - default:
-                    return: "failed"
-    """)
-    wf = parse_workflow(yaml_str)
+    wf = parse_fixture("try", "except_call.yaml")
     assert len(wf.steps) == 1
     step = wf.steps[0]
     assert step.name == "attempt"
@@ -53,29 +36,7 @@ def test_try_except_call():
 
 def test_try_except_steps():
     """VALID - try with steps block and except handler."""
-    yaml_str = textwrap.dedent("""\
-        - attempt:
-            try:
-              steps:
-                - get_token:
-                    call: http.post
-                    args:
-                      url: https://auth.example.com/token
-                    result: token
-                - use_token:
-                    call: http.get
-                    args:
-                      url: https://api.example.com/data
-                      headers:
-                        Authorization: '${"Bearer " + token.body.access_token}'
-                    result: data
-            except:
-              as: e
-              steps:
-                - handle:
-                    return: ${e.message}
-    """)
-    wf = parse_workflow(yaml_str)
+    wf = parse_fixture("try", "except_steps.yaml")
     assert len(wf.steps) == 1
     step = wf.steps[0]
     assert step.name == "attempt"
@@ -93,16 +54,7 @@ def test_try_except_steps():
 
 def test_try_retry_predefined():
     """VALID - try with a predefined retry policy expression."""
-    yaml_str = textwrap.dedent("""\
-        - reliable:
-            try:
-              call: http.get
-              args:
-                url: https://example.com/api
-              result: response
-            retry: ${http.default_retry}
-    """)
-    wf = parse_workflow(yaml_str)
+    wf = parse_fixture("try", "retry_predefined.yaml")
     assert len(wf.steps) == 1
     step = wf.steps[0]
     assert step.name == "reliable"
@@ -114,24 +66,7 @@ def test_try_retry_predefined():
 
 def test_try_retry_custom():
     """VALID - try with a custom retry policy."""
-    yaml_str = textwrap.dedent("""\
-        - reliable:
-            try:
-              call: http.post
-              args:
-                url: https://example.com/api
-                body:
-                  data: "important"
-              result: response
-            retry:
-              predicate: ${http.default_retry_predicate}
-              max_retries: 5
-              backoff:
-                initial_delay: 1
-                max_delay: 60
-                multiplier: 2
-    """)
-    wf = parse_workflow(yaml_str)
+    wf = parse_fixture("try", "retry_custom.yaml")
     assert len(wf.steps) == 1
     step = wf.steps[0]
     assert step.name == "reliable"
@@ -149,27 +84,7 @@ def test_try_retry_custom():
 
 def test_try_retry_except_combined():
     """VALID - try with both retry and except."""
-    yaml_str = textwrap.dedent("""\
-        - robust:
-            try:
-              call: http.get
-              args:
-                url: https://example.com/api
-              result: response
-            retry:
-              predicate: ${http.default_retry_predicate}
-              max_retries: 3
-              backoff:
-                initial_delay: 1
-                max_delay: 30
-                multiplier: 2
-            except:
-              as: e
-              steps:
-                - fallback:
-                    return: "all retries failed"
-    """)
-    wf = parse_workflow(yaml_str)
+    wf = parse_fixture("try", "retry_except_combined.yaml")
     assert len(wf.steps) == 1
     step = wf.steps[0]
     assert step.name == "robust"

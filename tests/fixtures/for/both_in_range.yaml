@@ -1,0 +1,9 @@
+- loop:
+    for:
+      value: x
+      in: [1, 2, 3]
+      range: [1, 10]
+      steps:
+        - noop:
+            assign:
+              - y: ${x}

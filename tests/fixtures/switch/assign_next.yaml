@@ -1,0 +1,8 @@
+- check:
+    switch:
+      - condition: ${"key" in args}
+        assign:
+          - value: ${args.key}
+        next: process
+- process:
+    return: ${value}

@@ -1,0 +1,15 @@
+# For loop variable referenced OUTSIDE the loop -- should error
+- init:
+    assign:
+      - items: [1, 2, 3]
+- loop:
+    for:
+      value: item
+      in: ${items}
+      steps:
+        - process:
+            assign:
+              - x: ${item}
+- after_loop:
+    assign:
+      - result: ${item}

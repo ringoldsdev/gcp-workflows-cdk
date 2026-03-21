@@ -1,0 +1,6 @@
+# Raise step references a variable
+- init:
+    assign:
+      - error_msg: "something went wrong"
+- fail:
+    raise: ${error_msg}

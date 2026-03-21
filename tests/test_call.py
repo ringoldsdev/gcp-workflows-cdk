@@ -1,7 +1,5 @@
 """Tests for CallStep validation."""
 
-import textwrap
-
 import pytest
 from pydantic import ValidationError
 
@@ -10,22 +8,12 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from cloud_workflows.models import parse_workflow, CallStep
-
-
-def parse(yaml_str: str):
-    """Helper: dedent + parse a YAML string."""
-    return parse_workflow(textwrap.dedent(yaml_str))
+from conftest import parse_fixture
 
 
 def test_call_http_get():
     """VALID: http.get call with args and result."""
-    wf = parse("""\
-        - fetch:
-            call: http.get
-            args:
-              url: https://example.com/api
-            result: response
-    """)
+    wf = parse_fixture("call", "http_get.yaml")
     step = wf.steps[0]
     body = step.body
     assert isinstance(body, CallStep)
@@ -35,17 +23,7 @@ def test_call_http_get():
 
 def test_call_http_post_auth():
     """VALID: http.post call with auth and body in args."""
-    wf = parse("""\
-        - post_data:
-            call: http.post
-            args:
-              url: https://us-central1-myproject.cloudfunctions.net/myfunc
-              auth:
-                type: OIDC
-              body:
-                message: "Hello World"
-            result: the_message
-    """)
+    wf = parse_fixture("call", "http_post_auth.yaml")
     step = wf.steps[0]
     body = step.body
     assert isinstance(body, CallStep)
@@ -58,11 +36,7 @@ def test_call_http_post_auth():
 
 def test_call_no_args():
     """VALID: args is optional."""
-    wf = parse("""\
-        - get_time:
-            call: sys.now
-            result: current_time
-    """)
+    wf = parse_fixture("call", "no_args.yaml")
     step = wf.steps[0]
     body = step.body
     assert isinstance(body, CallStep)
@@ -73,12 +47,7 @@ def test_call_no_args():
 
 def test_call_no_result():
     """VALID: result is optional."""
-    wf = parse("""\
-        - log_it:
-            call: sys.log
-            args:
-              data: "hello"
-    """)
+    wf = parse_fixture("call", "no_result.yaml")
     step = wf.steps[0]
     body = step.body
     assert isinstance(body, CallStep)
@@ -89,23 +58,7 @@ def test_call_no_result():
 
 def test_call_subworkflow():
     """VALID: Form B with subworkflow call."""
-    wf = parse("""\
-        main:
-            steps:
-                - invoke:
-                    call: my_helper
-                    args:
-                        x: 42
-                    result: output
-                - done:
-                    return: ${output}
-
-        my_helper:
-            params: [x]
-            steps:
-                - compute:
-                    return: ${x * 2}
-    """)
+    wf = parse_fixture("call", "subworkflow.yaml")
     # Form B: SubworkflowsWorkflow
     main = wf.workflows["main"]
     invoke_step = main.steps[0]

@@ -1,0 +1,16 @@
+# Try with steps body -- variables defined inside try are workflow-scoped
+- attempt:
+    try:
+      steps:
+        - inner:
+            assign:
+              - x: 10
+    except:
+      as: e
+      steps:
+        - handle:
+            assign:
+              - err: ${e.message}
+- after:
+    assign:
+      - result: ${x}

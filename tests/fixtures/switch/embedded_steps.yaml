@@ -1,0 +1,11 @@
+- check:
+    switch:
+      - condition: ${x == 1}
+        steps:
+          - compute:
+              assign:
+                - result: ${x + 10}
+          - done:
+              return: ${result}
+      - condition: true
+        return: "default"

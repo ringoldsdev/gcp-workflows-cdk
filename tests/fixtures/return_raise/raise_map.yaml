@@ -1,0 +1,4 @@
+- fail:
+    raise:
+      code: 404
+      message: "Resource not found"

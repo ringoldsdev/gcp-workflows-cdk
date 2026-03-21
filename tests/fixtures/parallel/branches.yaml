@@ -1,0 +1,29 @@
+- init:
+    assign:
+      - results: {}
+- parallel_work:
+    parallel:
+      shared: [results]
+      branches:
+        - branch_a:
+            steps:
+              - get_a:
+                  call: http.get
+                  args:
+                    url: https://example.com/a
+                  result: a
+              - save_a:
+                  assign:
+                    - results.a: ${a.body}
+        - branch_b:
+            steps:
+              - get_b:
+                  call: http.get
+                  args:
+                    url: https://example.com/b
+                  result: b
+              - save_b:
+                  assign:
+                    - results.b: ${b.body}
+- done:
+    return: ${results}

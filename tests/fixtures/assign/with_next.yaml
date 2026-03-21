@@ -1,0 +1,9 @@
+- init:
+    assign:
+      - x: 1
+    next: done
+- skipped:
+    assign:
+      - x: 2
+- done:
+    return: ${x}

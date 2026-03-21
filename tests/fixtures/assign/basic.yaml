@@ -1,0 +1,10 @@
+- init:
+    assign:
+      - x: 5
+      - y: "hello"
+      - z: true
+      - w: null
+      - list: [1, 2, 3]
+      - map:
+          key1: "value1"
+          key2: "value2"

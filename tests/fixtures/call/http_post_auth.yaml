@@ -1,0 +1,9 @@
+- post_data:
+    call: http.post
+    args:
+      url: https://us-central1-myproject.cloudfunctions.net/myfunc
+      auth:
+        type: OIDC
+      body:
+        message: "Hello World"
+    result: the_message

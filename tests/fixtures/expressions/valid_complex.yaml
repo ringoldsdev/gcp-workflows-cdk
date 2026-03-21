@@ -1,0 +1,13 @@
+# Workflow with valid complex/mixed expressions
+- init:
+    assign:
+      - x: 10
+      - result: ${(x + 5) * 2 > 20 and len(items) != 0}
+      - url: '${"https://api.example.com/users/" + string(userId)}'
+      - conditional_val: ${x > 0 and x < 100}
+      - chained_compare: ${a == b or c != d}
+      - arith_in_call: ${string(x * 2 + 1)}
+      - access_and_op: ${response.body.count + 1}
+      - list_expr: ${[x + 1, x + 2, x + 3]}
+      - map_expr: '${ {"result": x * 2, "name": name} }'
+      - nested_access_call: ${len(response.body.items)}

@@ -1,0 +1,11 @@
+- group:
+    steps:
+      - init:
+          assign:
+            - x: 42
+    next: done
+- skipped:
+    assign:
+      - x: 0
+- done:
+    return: ${x}

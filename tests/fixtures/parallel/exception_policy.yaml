@@ -1,0 +1,14 @@
+- work:
+    parallel:
+      exception_policy: continueAll
+      shared: [results]
+      branches:
+        - safe:
+            steps:
+              - ok:
+                  assign:
+                    - results: ["ok"]
+        - risky:
+            steps:
+              - fail:
+                  raise: "oops"

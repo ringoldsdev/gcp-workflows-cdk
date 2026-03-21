@@ -1,0 +1,20 @@
+- attempt:
+    try:
+      steps:
+        - get_token:
+            call: http.post
+            args:
+              url: https://auth.example.com/token
+            result: token
+        - use_token:
+            call: http.get
+            args:
+              url: https://api.example.com/data
+              headers:
+                Authorization: '${"Bearer " + token.body.access_token}'
+            result: data
+    except:
+      as: e
+      steps:
+        - handle:
+            return: ${e.message}

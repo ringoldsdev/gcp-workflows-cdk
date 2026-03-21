@@ -1,0 +1,10 @@
+- loop:
+    for:
+      value: item
+      index: idx
+      in: ["a", "b", "c"]
+      steps:
+        - log:
+            call: sys.log
+            args:
+              text: '${"Item " + string(idx) + ": " + item}'

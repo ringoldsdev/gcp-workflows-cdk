@@ -1,0 +1,46 @@
+- init:
+    assign:
+      - results: []
+- parallel_fetch:
+    parallel:
+      shared: [results]
+      branches:
+        - api_a:
+            steps:
+              - fetch_a:
+                  try:
+                    call: http.get
+                    args:
+                      url: https://api-a.example.com/data
+                    result: a_data
+                  retry: ${http.default_retry}
+                  except:
+                    as: e
+                    steps:
+                      - default_a:
+                          assign:
+                            - a_data:
+                                body: "fallback_a"
+              - save_a:
+                  assign:
+                    - results: ${list.concat(results, [a_data.body])}
+        - api_b:
+            steps:
+              - fetch_b:
+                  try:
+                    call: http.get
+                    args:
+                      url: https://api-b.example.com/data
+                    result: b_data
+                  except:
+                    as: e
+                    steps:
+                      - default_b:
+                          assign:
+                            - b_data:
+                                body: "fallback_b"
+              - save_b:
+                  assign:
+                    - results: ${list.concat(results, [b_data.body])}
+- done:
+    return: ${results}

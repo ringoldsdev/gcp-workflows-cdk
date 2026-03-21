@@ -1,0 +1,15 @@
+# Workflow with valid function call expressions
+- init:
+    assign:
+      - items: [1, 2, 3]
+      - config: {"a": 1}
+      - count: ${len(items)}
+      - map_keys: ${keys(config)}
+      - to_int: ${int("42")}
+      - to_double: ${double("3.14")}
+      - to_string: ${string(42)}
+      - to_bool: ${bool(1)}
+      - val_type: ${type(items)}
+      - negation: ${not(true)}
+      - nested_call: ${len(keys(config))}
+      - call_with_expr: ${string(len(items) + 1)}

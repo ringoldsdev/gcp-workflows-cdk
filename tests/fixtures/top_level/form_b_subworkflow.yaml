@@ -1,0 +1,16 @@
+main:
+    params: [args]
+    steps:
+        - call_sub:
+            call: greet
+            args:
+                name: ${args.name}
+            result: greeting
+        - done:
+            return: ${greeting}
+
+greet:
+    params: [name]
+    steps:
+        - build:
+            return: ${"Hello, " + name}

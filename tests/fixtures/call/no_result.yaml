@@ -1,0 +1,4 @@
+- log_it:
+    call: sys.log
+    args:
+      data: "hello"

@@ -1,0 +1,15 @@
+# Switch with variable defined in ALL branches -- should be definite
+- init:
+    assign:
+      - x: 10
+- decide:
+    switch:
+      - condition: ${x > 5}
+        assign:
+          - result: "big"
+      - condition: ${x <= 5}
+        assign:
+          - result: "small"
+- use_result:
+    assign:
+      - output: ${result}

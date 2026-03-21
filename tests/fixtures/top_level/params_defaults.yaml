@@ -1,0 +1,15 @@
+main:
+    steps:
+        - call_sub:
+            call: my_sub
+            args:
+                first: "Alice"
+            result: r
+        - done:
+            return: ${r}
+
+my_sub:
+    params: [first, last: "Smith", country: "US"]
+    steps:
+        - build:
+            return: ${"Hello " + first + " " + last + " from " + country}

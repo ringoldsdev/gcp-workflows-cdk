@@ -1,0 +1,4 @@
+# Completely undefined variable (never assigned anywhere)
+- use:
+    assign:
+      - result: ${totally_undefined + 1}

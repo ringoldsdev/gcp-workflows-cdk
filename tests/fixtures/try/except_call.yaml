@@ -1,0 +1,15 @@
+- attempt:
+    try:
+      call: http.get
+      args:
+        url: https://example.com/might-fail
+      result: response
+    except:
+      as: e
+      steps:
+        - log:
+            call: sys.log
+            args:
+              data: ${e.message}
+        - default:
+            return: "failed"

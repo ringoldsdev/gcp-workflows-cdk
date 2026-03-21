@@ -1,0 +1,13 @@
+# Workflow with valid membership (in) expressions
+- init:
+    assign:
+      - my_map: {"a": 1}
+      - my_list: [1, 2, 3]
+- check:
+    switch:
+      - condition: ${"a" in my_map}
+        next: end
+      - condition: ${2 in my_list}
+        next: end
+      - condition: ${x in my_map and y in my_list}
+        next: end

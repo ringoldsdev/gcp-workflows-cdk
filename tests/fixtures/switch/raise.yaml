@@ -1,0 +1,6 @@
+- check:
+    switch:
+      - condition: ${x < 0}
+        raise: "x must be non-negative"
+      - condition: true
+        return: ${x}

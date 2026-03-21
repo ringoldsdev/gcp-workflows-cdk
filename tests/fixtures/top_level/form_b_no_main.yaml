@@ -1,0 +1,5 @@
+my_subworkflow:
+    params: [x]
+    steps:
+        - step1:
+            return: ${x}

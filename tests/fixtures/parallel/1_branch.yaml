@@ -1,0 +1,8 @@
+- work:
+    parallel:
+      branches:
+        - only_one:
+            steps:
+              - step:
+                  assign:
+                    - x: 1

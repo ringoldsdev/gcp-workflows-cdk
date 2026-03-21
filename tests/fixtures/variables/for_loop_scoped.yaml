@@ -1,0 +1,15 @@
+# For loop variables (value, index) are loop-scoped
+- init:
+    assign:
+      - items: [1, 2, 3]
+      - total: 0
+- loop:
+    for:
+      value: item
+      index: idx
+      in: ${items}
+      steps:
+        - accumulate:
+            assign:
+              - total: ${total + item}
+              - log_msg: '${"Index " + string(idx)}'

@@ -1,0 +1,7 @@
+# Variable referenced BEFORE it is defined -- should produce an error
+- use_first:
+    assign:
+      - result: ${x + 1}
+- define_later:
+    assign:
+      - x: 10

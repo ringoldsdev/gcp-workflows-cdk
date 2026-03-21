@@ -1,0 +1,9 @@
+# Variables defined via assign, then referenced in later steps
+- init:
+    assign:
+      - name: "Alice"
+      - age: 30
+- greet:
+    assign:
+      - greeting: '${"Hello, " + name}'
+      - next_year: ${age + 1}

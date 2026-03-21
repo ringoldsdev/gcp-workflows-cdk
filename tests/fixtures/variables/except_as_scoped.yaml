@@ -1,0 +1,13 @@
+# Try/except with 'as' variable scoped to except block
+- attempt:
+    try:
+      call: http.get
+      args:
+        url: "https://example.com/api"
+      result: response
+    except:
+      as: e
+      steps:
+        - log_error:
+            assign:
+              - error_msg: ${e.message}

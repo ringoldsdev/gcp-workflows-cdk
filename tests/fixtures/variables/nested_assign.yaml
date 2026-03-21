@@ -1,0 +1,9 @@
+# Modifying nested values -- root variable must exist
+- init:
+    assign:
+      - config:
+          key1: "value1"
+          key2: "value2"
+- update:
+    assign:
+      - config.key1: "new_value"

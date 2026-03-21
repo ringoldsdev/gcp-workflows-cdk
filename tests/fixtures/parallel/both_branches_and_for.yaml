@@ -1,0 +1,20 @@
+- work:
+    parallel:
+      branches:
+        - b1:
+            steps:
+              - s:
+                  assign:
+                    - x: 1
+        - b2:
+            steps:
+              - s:
+                  assign:
+                    - x: 2
+      for:
+        value: i
+        range: [1, 5]
+        steps:
+          - s:
+              assign:
+                - y: 1

@@ -1,0 +1,7 @@
+- loop:
+    for:
+      value: x
+      steps:
+        - noop:
+            assign:
+              - y: ${x}

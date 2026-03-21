@@ -1,0 +1,8 @@
+# Workflow with valid string expressions
+- init:
+    assign:
+      - name: "Alice"
+      - greeting: '${"Hello, " + name + "!"}'
+      - with_number: '${"count: " + string(42)}'
+      - empty: '${""}'
+      - concat_many: '${"a" + "b" + "c" + "d"}'

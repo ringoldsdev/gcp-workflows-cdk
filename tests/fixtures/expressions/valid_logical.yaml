@@ -1,0 +1,10 @@
+# Workflow with valid logical expressions
+- init:
+    assign:
+      - a: true
+      - b: false
+      - and_result: ${a and b}
+      - or_result: ${a or b}
+      - not_result: ${not(a)}
+      - combined: ${a and b or not(a)}
+      - complex_logic: ${(a or b) and not(a and b)}

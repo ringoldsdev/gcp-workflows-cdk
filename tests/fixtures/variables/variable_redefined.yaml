@@ -1,0 +1,10 @@
+# Variable redefined by later assign
+- init:
+    assign:
+      - x: 10
+- redefine:
+    assign:
+      - x: ${x + 5}
+- use:
+    assign:
+      - result: ${x * 2}

@@ -1,0 +1,15 @@
+# Nested step access -- variables inside nested steps share workflow scope
+- init:
+    assign:
+      - x: 10
+- outer:
+    steps:
+      - inner:
+          assign:
+            - y: ${x + 5}
+      - inner2:
+          assign:
+            - z: ${y * 2}
+- after:
+    assign:
+      - result: ${z + x}

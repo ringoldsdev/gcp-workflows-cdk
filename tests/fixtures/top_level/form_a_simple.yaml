@@ -1,0 +1,5 @@
+- assign_vars:
+    assign:
+      - message: "hello"
+- return_result:
+    return: ${message}

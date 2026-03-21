@@ -1,0 +1,13 @@
+# Workflow with valid member access expressions
+- init:
+    assign:
+      - config:
+          key1: "value1"
+          key2: "value2"
+      - items: [1, 2, 3]
+      - dot_access: ${config.key1}
+      - bracket_access: ${config["key1"]}
+      - list_index: ${items[0]}
+      - chained: ${response.body.data[0].name}
+      - mixed_access: ${data["items"][0].value}
+      - nested_brackets: ${matrix[0][1]}

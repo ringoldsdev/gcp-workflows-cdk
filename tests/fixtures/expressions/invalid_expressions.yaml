@@ -1,0 +1,33 @@
+# Workflow with INVALID expressions -- each assign has a comment describing the error
+# This file is used by loading individual expression strings for testing, not by parsing.
+# The test code will extract and validate each expression individually.
+
+# Expression with unclosed parenthesis
+expr_unclosed_paren: "${(x + y}"
+
+# Expression with unclosed string
+expr_unclosed_string: "${\"hello}"
+
+# Expression with consecutive operators
+expr_double_operator: "${x ++ y}"
+
+# Expression with missing operand
+expr_trailing_operator: "${x +}"
+
+# Expression with unclosed bracket
+expr_unclosed_bracket: "${items[0}"
+
+# Expression with empty parens used as value (not function call)
+expr_empty_parens: "${()}"
+
+# Expression with unexpected colon outside map
+expr_stray_colon: "${x : y}"
+
+# Expression with unclosed map
+expr_unclosed_map: "${{\"a\": 1}"
+
+# Expression with missing map value
+expr_map_no_value: "${{\"a\":}}"
+
+# Expression with consecutive commas in list
+expr_double_comma: "${[1,, 2]}"

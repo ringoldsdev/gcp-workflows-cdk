@@ -1,6 +1,5 @@
 """Integration tests for complex, multi-feature workflows."""
 
-import textwrap
 import pytest
 from pydantic import ValidationError
 
@@ -9,56 +8,12 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from cloud_workflows.models import parse_workflow
+from conftest import parse_fixture
 
 
 def test_full_workflow():
     """VALID: full workflow with params, assign, switch, for, try/retry/except, call, and return."""
-    wf = parse_workflow(
-        textwrap.dedent("""\
-        main:
-            params: [args]
-            steps:
-                - init:
-                    assign:
-                      - total: 0
-                      - items: ${args.items}
-                - validate:
-                    switch:
-                      - condition: ${len(items) == 0}
-                        return: "empty"
-                - process:
-                    for:
-                      value: item
-                      in: ${items}
-                      steps:
-                        - fetch:
-                            try:
-                              call: http.get
-                              args:
-                                url: ${"https://api.example.com/items/" + string(item)}
-                              result: response
-                            retry: ${http.default_retry}
-                            except:
-                              as: e
-                              steps:
-                                - log_err:
-                                    call: sys.log
-                                    args:
-                                      data: ${e}
-                                      severity: "WARNING"
-                                - skip:
-                                    assign:
-                                      - skipped: true
-                                    next: continue
-                        - accumulate:
-                            assign:
-                              - total: ${total + response.body.value}
-                - done:
-                    return:
-                      total: ${total}
-                      count: ${len(items)}
-    """)
-    )
+    wf = parse_fixture("integration", "full_workflow.yaml")
     assert "main" in wf.workflows
     main = wf.workflows["main"]
     assert main.params == ["args"]
@@ -88,56 +43,7 @@ def test_full_workflow():
 
 def test_parallel_with_try():
     """VALID: parallel branches with nested try/except and shared variables."""
-    wf = parse_workflow(
-        textwrap.dedent("""\
-        - init:
-            assign:
-              - results: []
-        - parallel_fetch:
-            parallel:
-              shared: [results]
-              branches:
-                - api_a:
-                    steps:
-                      - fetch_a:
-                          try:
-                            call: http.get
-                            args:
-                              url: https://api-a.example.com/data
-                            result: a_data
-                          retry: ${http.default_retry}
-                          except:
-                            as: e
-                            steps:
-                              - default_a:
-                                  assign:
-                                    - a_data:
-                                        body: "fallback_a"
-                      - save_a:
-                          assign:
-                            - results: ${list.concat(results, [a_data.body])}
-                - api_b:
-                    steps:
-                      - fetch_b:
-                          try:
-                            call: http.get
-                            args:
-                              url: https://api-b.example.com/data
-                            result: b_data
-                          except:
-                            as: e
-                            steps:
-                              - default_b:
-                                  assign:
-                                    - b_data:
-                                        body: "fallback_b"
-                      - save_b:
-                          assign:
-                            - results: ${list.concat(results, [b_data.body])}
-        - done:
-            return: ${results}
-    """)
-    )
+    wf = parse_fixture("integration", "parallel_with_try.yaml")
     assert len(wf.steps) == 3
     assert wf.steps[0].name == "init"
     assert wf.steps[1].name == "parallel_fetch"

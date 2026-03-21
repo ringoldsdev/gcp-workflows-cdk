@@ -1,0 +1,19 @@
+# Workflow with valid comparison expressions
+- init:
+    assign:
+      - x: 10
+      - y: 20
+- check:
+    switch:
+      - condition: ${x == y}
+        next: end
+      - condition: ${x != y}
+        next: end
+      - condition: ${x < y}
+        next: end
+      - condition: ${x <= y}
+        next: end
+      - condition: ${x > y}
+        next: end
+      - condition: ${x >= y}
+        next: end

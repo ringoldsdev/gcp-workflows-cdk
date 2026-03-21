@@ -1,0 +1,42 @@
+main:
+    params: [args]
+    steps:
+        - init:
+            assign:
+              - total: 0
+              - items: ${args.items}
+        - validate:
+            switch:
+              - condition: ${len(items) == 0}
+                return: "empty"
+        - process:
+            for:
+              value: item
+              in: ${items}
+              steps:
+                - fetch:
+                    try:
+                      call: http.get
+                      args:
+                        url: ${"https://api.example.com/items/" + string(item)}
+                      result: response
+                    retry: ${http.default_retry}
+                    except:
+                      as: e
+                      steps:
+                        - log_err:
+                            call: sys.log
+                            args:
+                              data: ${e}
+                              severity: "WARNING"
+                        - skip:
+                            assign:
+                              - skipped: true
+                            next: continue
+                - accumulate:
+                    assign:
+                      - total: ${total + response.body.value}
+        - done:
+            return:
+              total: ${total}
+              count: ${len(items)}

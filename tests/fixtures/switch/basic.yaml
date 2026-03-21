@@ -1,0 +1,13 @@
+- init:
+    assign:
+      - x: 5
+- check:
+    switch:
+      - condition: ${x < 10}
+        next: small
+      - condition: ${x >= 10}
+        next: big
+- small:
+    return: "small"
+- big:
+    return: "big"

@@ -1,0 +1,22 @@
+# Subworkflows with params -- calling from main
+main:
+  steps:
+    - init:
+        assign:
+          - name: "Alice"
+    - call_greet:
+        call: greet
+        args:
+          person: ${name}
+        result: greeting_result
+    - output:
+        return: ${greeting_result}
+
+greet:
+  params: [person]
+  steps:
+    - build:
+        assign:
+          - msg: '${"Hello, " + person}'
+    - done:
+        return: ${msg}

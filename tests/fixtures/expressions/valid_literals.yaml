@@ -1,0 +1,18 @@
+# Workflow with valid literal expressions
+- init:
+    assign:
+      - int_val: ${42}
+      - neg_int: ${-7}
+      - zero: ${0}
+      - double_val: ${3.14}
+      - neg_double: ${-0.5}
+      - str_val: '${"hello"}'
+      - bool_true: ${true}
+      - bool_false: ${false}
+      - null_val: ${null}
+      - list_val: ${[1, 2, 3]}
+      - empty_list: ${[]}
+      - nested_list: ${[[1, 2], [3, 4]]}
+      - map_val: '${ {"a": 1, "b": 2} }'
+      - empty_map: '${ {} }'
+      - complex_literal: '${ {"items": [1, 2], "nested": {"x": true}} }'

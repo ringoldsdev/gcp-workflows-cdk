@@ -1,0 +1,7 @@
+- check:
+    switch:
+      - condition: ${x < 0}
+        return: "negative"
+    next: positive
+- positive:
+    return: "non-negative"
