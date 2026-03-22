@@ -288,8 +288,8 @@ class Condition:
     Usage::
 
         Condition(expr("x > 0"), next="positive")
-        Condition(expr("x < 0"), return_="negative")
-        Condition(True, raise_={"code": 400})
+        Condition(expr("x < 0"), returns="negative")
+        Condition(True, raises={"code": 400})
         Condition(expr("x > 0"), steps=inner_steps)
         Condition(expr("x > 0"), assign=[{"y": 1}])
 
@@ -298,8 +298,8 @@ class Condition:
         next: Jump target step name.
         steps: Inline steps to execute if condition is true.
         assign: Inline assignments if condition is true.
-        return_: Return value if condition is true.
-        raise_: Raise value if condition is true.
+        returns: Return value if condition is true.
+        raises: Raise value if condition is true.
     """
 
     def __init__(
@@ -309,15 +309,15 @@ class Condition:
         next: Optional[str] = None,
         steps: Any = None,
         assign: Optional[List[Dict[str, Any]]] = None,
-        return_: Any = _UNSET,
-        raise_: Any = _UNSET,
+        returns: Any = _UNSET,
+        raises: Any = _UNSET,
     ) -> None:
         self.condition = condition
         self.next = next
         self.steps = steps
         self.assign = assign
-        self.return_ = return_
-        self.raise_ = raise_
+        self.returns = returns
+        self.raises = raises
 
     def _to_model(self) -> SwitchCondition:
         """Convert to a SwitchCondition Pydantic model."""
@@ -328,12 +328,12 @@ class Condition:
             kwargs["steps"] = _resolve_steps(self.steps)
         if self.assign is not None:
             kwargs["assign"] = self.assign
-        if self.return_ is not _UNSET:
+        if self.returns is not _UNSET:
             # SwitchCondition uses alias "return" for field return_
-            kwargs["return"] = self.return_
-        if self.raise_ is not _UNSET:
+            kwargs["return"] = self.returns
+        if self.raises is not _UNSET:
             # SwitchCondition uses alias "raise" for field raise_
-            kwargs["raise"] = self.raise_
+            kwargs["raise"] = self.raises
         return SwitchCondition(**kwargs)
 
 
@@ -347,13 +347,10 @@ class Switch(StepType):
 
     Usage::
 
-        Switch(
-            conditions=[
-                Condition(expr("x > 0"), next="positive"),
-                Condition(True, next="negative"),
-            ],
-            next="fallback",
-        )
+        Switch([
+            Condition(expr("x > 0"), next="positive"),
+            Condition(True, next="negative"),
+        ], next="fallback")
 
     Args:
         conditions: List of Condition objects.
@@ -363,6 +360,7 @@ class Switch(StepType):
     def __init__(
         self,
         conditions: List[Condition],
+        /,
         *,
         next: Optional[str] = None,
     ) -> None:
@@ -390,13 +388,14 @@ class For(StepType):
 
     Usage::
 
-        For(value="item", in_=["a", "b", "c"], steps=inner)
+        For(value="item", items=["a", "b", "c"], steps=inner)
         For(value="item", range=[1, 10, 2], steps=inner)
-        For(value="item", in_=items, index="idx", steps=inner)
+        For(value="item", items=expr("my_list"), index="idx", steps=inner)
 
     Args:
         value: Loop variable name.
-        in_: Collection to iterate over (mutually exclusive with range).
+        items: Collection to iterate over (mutually exclusive with range).
+            Accepts a list, an expression, or any value.
         range: Range specification [start, end, step].
         index: Optional index variable name.
         steps: Loop body (Steps container or list of dicts).
@@ -406,17 +405,17 @@ class For(StepType):
         self,
         *,
         value: str,
-        in_: Any = None,
+        items: Any = None,
         range: Any = None,
         index: Optional[str] = None,
         steps: Any,
     ) -> None:
         if not value:
             raise ValueError("For requires a value variable name")
-        if in_ is None and range is None:
-            raise ValueError("For requires either in_ or range")
+        if items is None and range is None:
+            raise ValueError("For requires either items or range")
         self._value = value
-        self._in = in_
+        self._items = items
         self._range = range
         self._index = index
         self._steps = steps
@@ -427,7 +426,7 @@ class For(StepType):
             for_=ForBody(
                 value=self._value,
                 index=self._index,
-                in_=self._in,
+                in_=self._items,
                 range=self._range,
                 steps=step_dicts,
             )
@@ -506,13 +505,15 @@ class Try(StepType):
       (flat call fields in the try block).
     - Otherwise it produces a ``TryStepsBody`` (nested steps list).
 
+    The error variable is always ``e`` (opinionated).
+
     Usage::
 
         Try(
             steps=body_steps,
             retry={"predicate": expr("e.code == 429"), "max_retries": 3,
                     "backoff": {"initial_delay": 1, "max_delay": 30, "multiplier": 2}},
-            except_={"as": "e", "steps": except_steps},
+            error_steps=except_steps,
         )
 
         # Retry with a string predicate:
@@ -522,8 +523,8 @@ class Try(StepType):
         steps: Try body (Steps container or list of dicts).
         retry: Retry configuration — dict with predicate/max_retries/backoff,
             a RetryConfig model, or a string predicate name.
-        except_: Except handler — dict with "as" and "steps" keys,
-            or an ExceptBody model.
+        error_steps: Except handler steps (Steps container or list of dicts).
+            The error variable is always bound to ``e``.
     """
 
     def __init__(
@@ -531,11 +532,11 @@ class Try(StepType):
         *,
         steps: Any,
         retry: Optional[Union[Dict[str, Any], RetryConfig, str]] = None,
-        except_: Optional[Union[Dict[str, Any], ExceptBody]] = None,
+        error_steps: Optional[Any] = None,
     ) -> None:
         self._steps = steps
         self._retry_raw = retry
-        self._except_raw = except_
+        self._error_steps = error_steps
 
     def build(self, step_id: str) -> Dict[str, Any]:
         step_dicts = _resolve_steps(self._steps)
@@ -589,19 +590,11 @@ class Try(StepType):
         return self._retry_raw
 
     def _build_except(self) -> Optional[ExceptBody]:
-        """Resolve except handler."""
-        if self._except_raw is None:
+        """Resolve except handler with hardcoded error variable 'e'."""
+        if self._error_steps is None:
             return None
-        if isinstance(self._except_raw, ExceptBody):
-            return self._except_raw
-        if isinstance(self._except_raw, dict):
-            as_var = self._except_raw.get("as") or self._except_raw.get("as_")
-            steps_raw = self._except_raw["steps"]
-            step_dicts = _resolve_steps(steps_raw)
-            return ExceptBody(as_=as_var, steps=step_dicts)
-        raise TypeError(
-            f"except_ must be a dict or ExceptBody, got {type(self._except_raw).__name__}"
-        )
+        step_dicts = _resolve_steps(self._error_steps)
+        return ExceptBody(as_="e", steps=step_dicts)
 
 
 # ============================================================================

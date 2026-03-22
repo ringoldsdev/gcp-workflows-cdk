@@ -92,13 +92,11 @@ s("fail", Raise({"code": 404, "message": "Not found"}))
 ```python
 from cloud_workflows import Switch, Condition
 
-s("check", Switch(
-    conditions=[
-        Condition(expr("x > 0"), next="positive"),
-        Condition(expr("x == 0"), return_="zero"),
-        Condition(True, next="negative"),  # default case
-    ],
-))
+s("check", Switch([
+    Condition(expr("x > 0"), next="positive"),
+    Condition(expr("x == 0"), returns="zero"),
+    Condition(True, next="negative"),  # default case
+]))
 ```
 
 ### For Loop
@@ -109,9 +107,9 @@ from cloud_workflows import For
 inner = Steps()
 inner("log", Call("sys.log", args={"text": expr("item")}))
 
-s("loop", For(value="item", in_=["a", "b", "c"], steps=inner))
+s("loop", For(value="item", items=["a", "b", "c"], steps=inner))
 s("count", For(value="i", range=[1, 10], steps=inner))
-s("indexed", For(value="item", in_=items, index="idx", steps=inner))
+s("indexed", For(value="item", items=items, index="idx", steps=inner))
 ```
 
 ### Parallel
@@ -151,7 +149,7 @@ s("safe_call", Try(
         "max_retries": 3,
         "backoff": {"initial_delay": 1, "max_delay": 60, "multiplier": 2},
     },
-    except_={"as": "e", "steps": except_steps},
+    error_steps=except_steps,
 ))
 ```
 
@@ -185,7 +183,7 @@ def error_handler():
     except_steps = Steps()
     except_steps("fail", Raise(expr("e")))
     s = Steps()
-    s("safe", Try(steps=body, except_={"as": "e", "steps": except_steps}))
+    s("safe", Try(steps=body, error_steps=except_steps))
     return s
 
 main = Steps()

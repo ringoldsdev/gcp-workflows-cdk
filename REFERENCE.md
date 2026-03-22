@@ -195,18 +195,18 @@ Raise(value)
 #### Switch
 
 ```python
-Switch(conditions, *, next=None)
+Switch(conditions, /, *, next=None)
 ```
 
 | Arg | Description |
 |---|---|
-| `conditions` | List of `Condition` objects (at least one required). |
+| `conditions` | Positional list of `Condition` objects (at least one required). |
 | `next` | Default fallthrough target. |
 
 #### Condition
 
 ```python
-Condition(condition, *, next=None, steps=None, assign=None, return_=UNSET, raise_=UNSET)
+Condition(condition, *, next=None, steps=None, assign=None, returns=UNSET, raises=UNSET)
 ```
 
 | Arg | Description |
@@ -215,19 +215,19 @@ Condition(condition, *, next=None, steps=None, assign=None, return_=UNSET, raise
 | `next` | Jump target. |
 | `steps` | Inline `Steps` container to execute. |
 | `assign` | Inline assignments (list of single-key dicts). |
-| `return_` | Return value if condition is true. Uses `_UNSET` sentinel; `None` is a valid value. |
-| `raise_` | Raise value if condition is true. Uses `_UNSET` sentinel; `None` is a valid value. |
+| `returns` | Return value if condition is true. Uses `_UNSET` sentinel; `None` is a valid value. |
+| `raises` | Raise value if condition is true. Uses `_UNSET` sentinel; `None` is a valid value. |
 
 #### For
 
 ```python
-For(*, value, in_=None, range=None, index=None, steps)
+For(*, value, items=None, range=None, index=None, steps)
 ```
 
 | Arg | Description |
 |---|---|
 | `value` | Loop variable name (required). |
-| `in_` | Collection to iterate (mutually exclusive with `range`). |
+| `items` | Collection to iterate (mutually exclusive with `range`). Accepts a list, expression, or any value. |
 | `range` | Range specification `[start, end]` or `[start, end, step]`. |
 | `index` | Optional index variable name. |
 | `steps` | Loop body — `Steps` container or list of dicts (required). |
@@ -248,14 +248,14 @@ Parallel(*, branches, shared=None, exception_policy=None, concurrency_limit=None
 #### Try
 
 ```python
-Try(*, steps, retry=None, except_=None)
+Try(*, steps, retry=None, error_steps=None)
 ```
 
 | Arg | Description |
 |---|---|
 | `steps` | Try body — `Steps` container or list of dicts (required). |
 | `retry` | Retry config — dict, `RetryConfig` model, or string predicate name. |
-| `except_` | Except handler — dict with `"as"` and `"steps"` keys, or `ExceptBody` model. |
+| `error_steps` | Except handler steps — `Steps` container or list of dicts. The error variable is always bound to `e`. |
 
 Try body auto-detection: if the body is a single Call step, it produces a `TryCallBody` (flat call fields); otherwise a `TryStepsBody` (nested steps list).
 

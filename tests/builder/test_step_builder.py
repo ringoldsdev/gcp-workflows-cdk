@@ -216,7 +216,7 @@ class TestSwitch:
         s(
             "check",
             Switch(
-                conditions=[
+                [
                     Condition(expr("x > 0"), next="positive"),
                     Condition(True, next="negative"),
                 ]
@@ -239,7 +239,7 @@ class TestSwitch:
         s(
             "check",
             Switch(
-                conditions=[Condition(expr("x > 0"), next="positive")],
+                [Condition(expr("x > 0"), next="positive")],
                 next="fallback",
             ),
         )
@@ -261,7 +261,7 @@ class TestSwitch:
         s(
             "check",
             Switch(
-                conditions=[
+                [
                     Condition(expr("x > 0"), next="positive"),
                     Condition(True, next="negative"),
                 ]
@@ -280,7 +280,7 @@ class TestSwitch:
         s(
             "check",
             Switch(
-                conditions=[
+                [
                     Condition(expr("x > 0"), steps=inner),
                     Condition(True, next="fallback"),
                 ]
@@ -304,7 +304,7 @@ class TestFor:
         inner("log", Call("sys.log", args={"text": expr("item")}))
 
         s = Steps()
-        s("loop", For(value="item", in_=["a", "b", "c"], steps=inner))
+        s("loop", For(value="item", items=["a", "b", "c"], steps=inner))
         d = _to_dict(s)
         assert d == [
             {
@@ -346,7 +346,7 @@ class TestFor:
         inner("log", Call("sys.log", args={"text": expr("item")}))
 
         s = Steps()
-        s("loop", For(value="item", in_=["a", "b"], index="idx", steps=inner))
+        s("loop", For(value="item", items=["a", "b"], index="idx", steps=inner))
         d = _to_dict(s)
         assert d == [
             {
@@ -368,7 +368,7 @@ class TestFor:
         inner("log", Call("sys.log", args={"text": expr("item")}))
 
         s = Steps()
-        s("loop", For(value="item", in_=["a", "b", "c"], steps=inner))
+        s("loop", For(value="item", items=["a", "b", "c"], steps=inner))
         expected = yaml.safe_load(load_fixture("cdk", "for_loop.yaml"))
         assert _to_dict(s) == expected
 
@@ -378,7 +378,7 @@ class TestFor:
         inner("log", Call("sys.log", args={"text": expr("item")}))
 
         s = Steps()
-        s("loop", For(value="item", in_=["a", "b", "c"], steps=inner))
+        s("loop", For(value="item", items=["a", "b", "c"], steps=inner))
         expected = yaml.safe_load(load_fixture("cdk", "for_lambda_inner.yaml"))
         assert _to_dict(s) == expected
 
@@ -464,7 +464,7 @@ class TestTry:
                         "multiplier": 2,
                     },
                 },
-                except_={"as": "e", "steps": except_steps},
+                error_steps=except_steps,
             ),
         )
         d = _to_dict(s)
@@ -488,7 +488,7 @@ class TestTry:
         s = Steps()
         s(
             "try_call",
-            Try(steps=body, except_={"as": "e", "steps": except_steps}),
+            Try(steps=body, error_steps=except_steps),
         )
         d = _to_dict(s)
         expected = yaml.safe_load(load_fixture("cdk", "try_lambda_inner.yaml"))
@@ -724,11 +724,11 @@ class TestErrors:
 
     def test_switch_no_conditions_raises(self):
         with pytest.raises(ValueError, match="at least one"):
-            Switch(conditions=[])
+            Switch([])
 
     def test_for_no_collection_raises(self):
         s = Steps()
-        with pytest.raises(ValueError, match="in_ or range"):
+        with pytest.raises(ValueError, match="items or range"):
             For(value="item", steps=s)
 
     def test_parallel_no_branches_raises(self):
