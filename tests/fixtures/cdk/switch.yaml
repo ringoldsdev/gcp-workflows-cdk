@@ -1,0 +1,13 @@
+- init:
+    assign:
+    - x: 10
+- check:
+    switch:
+    - condition: ${x > 0}
+      next: positive
+    - condition: true
+      next: negative
+- positive:
+    return: positive
+- negative:
+    return: negative

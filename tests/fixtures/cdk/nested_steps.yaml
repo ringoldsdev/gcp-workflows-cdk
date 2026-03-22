@@ -1,0 +1,13 @@
+- group:
+    steps:
+    - step_a:
+        call: sys.log
+        args:
+          text: a
+    - step_b:
+        call: sys.log
+        args:
+          text: b
+    next: done
+- done:
+    return: ok

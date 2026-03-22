@@ -1,0 +1,19 @@
+main:
+  steps:
+  - call_helper:
+      call: helper
+      args:
+        input: test
+      result: res
+  - done:
+      return: ${res}
+helper:
+  params:
+  - input
+  steps:
+  - log:
+      call: sys.log
+      args:
+        text: ${input}
+  - done:
+      return: ok

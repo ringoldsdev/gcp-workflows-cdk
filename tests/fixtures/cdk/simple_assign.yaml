@@ -1,0 +1,6 @@
+- init:
+    assign:
+    - x: 10
+    - y: 20
+- done:
+    return: ${x + y}

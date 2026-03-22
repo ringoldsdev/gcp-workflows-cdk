@@ -1,11 +1,39 @@
 """Cloud Workflows YAML validator using Pydantic v2."""
 
-from .models import parse_workflow, Workflow, SimpleWorkflow, SubworkflowsWorkflow
+from .models import (
+    parse_workflow,
+    to_yaml,
+    expr,
+    Workflow,
+    SimpleWorkflow,
+    SubworkflowsWorkflow,
+    WorkflowDefinition,
+    Step,
+    AssignStep,
+    CallStep,
+    ReturnStep,
+    RaiseStep,
+    SwitchStep,
+    SwitchCondition,
+    ForStep,
+    ForBody,
+    ParallelStep,
+    ParallelBody,
+    Branch,
+    TryStep,
+    TryCallBody,
+    TryStepsBody,
+    ExceptBody,
+    RetryConfig,
+    BackoffConfig,
+    NestedStepsStep,
+)
 from .parser import (
     validate_yaml,
     validate_file,
     analyze_yaml,
     analyze_file,
+    analyze_workflow,
     AnalysisResult,
 )
 from .expressions import (
@@ -29,9 +57,13 @@ __all__ = [
     "Workflow",
     "SimpleWorkflow",
     "SubworkflowsWorkflow",
+    # Serialization
+    "to_yaml",
+    "expr",
     # Full analysis pipeline
     "analyze_yaml",
     "analyze_file",
+    "analyze_workflow",
     "AnalysisResult",
     # Expression validation
     "validate_expression",
@@ -43,4 +75,25 @@ __all__ = [
     "analyze_variables",
     "VariableIssue",
     "Severity",
+    # Model types (for programmatic construction)
+    "WorkflowDefinition",
+    "Step",
+    "AssignStep",
+    "CallStep",
+    "ReturnStep",
+    "RaiseStep",
+    "SwitchStep",
+    "SwitchCondition",
+    "ForStep",
+    "ForBody",
+    "ParallelStep",
+    "ParallelBody",
+    "Branch",
+    "TryStep",
+    "TryCallBody",
+    "TryStepsBody",
+    "ExceptBody",
+    "RetryConfig",
+    "BackoffConfig",
+    "NestedStepsStep",
 ]

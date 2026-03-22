@@ -9,7 +9,7 @@ from typing import List, Union
 import yaml
 
 from .expressions import ExpressionError, validate_all_expressions
-from .models import Workflow, parse_workflow
+from .models import SimpleWorkflow, SubworkflowsWorkflow, Workflow, parse_workflow
 from .variables import Severity, VariableIssue, analyze_variables
 
 
@@ -81,3 +81,28 @@ def analyze_file(path: Union[str, Path]) -> AnalysisResult:
     """Full analysis pipeline for a YAML file."""
     with open(path, "r", encoding="utf-8") as f:
         return analyze_yaml(f.read())
+
+
+def analyze_workflow(workflow: Workflow) -> AnalysisResult:
+    """Full analysis pipeline for a programmatically constructed Workflow.
+
+    Validates expressions on the serialized dict and variable references
+    on the Pydantic models, without round-tripping through a YAML string.
+    """
+    if isinstance(workflow, SimpleWorkflow):
+        raw = workflow.to_dict()
+    elif isinstance(workflow, SubworkflowsWorkflow):
+        raw = workflow.to_dict()
+    else:
+        raise TypeError(
+            f"Expected SimpleWorkflow or SubworkflowsWorkflow, got {type(workflow)}"
+        )
+
+    expr_errors = validate_all_expressions(raw)
+    var_issues = analyze_variables(workflow)
+
+    return AnalysisResult(
+        workflow=workflow,
+        expression_errors=expr_errors,
+        variable_issues=var_issues,
+    )

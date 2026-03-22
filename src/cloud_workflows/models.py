@@ -3,6 +3,9 @@
 Follows the specification in docs/06_pydantic_design.md exactly.
 Models are defined in dependency order (leaf-first), with forward references
 resolved via model_rebuild() at module end.
+
+Serialization uses Pydantic's native model_dump(by_alias=True, exclude_none=True).
+Step and Branch use @model_serializer to reverse their structural transforms.
 """
 
 from __future__ import annotations
@@ -17,8 +20,19 @@ from pydantic import (
     Field,
     Tag,
     field_validator,
+    model_serializer,
     model_validator,
 )
+
+
+# =============================================================================
+# Helper functions
+# =============================================================================
+
+
+def expr(body: str) -> str:
+    """Wrap an expression body in ${...} syntax."""
+    return f"${{{body}}}"
 
 
 # =============================================================================
@@ -133,12 +147,19 @@ class Branch(BaseModel):
     def from_raw(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             raise ValueError(f"Branch must be a dict, got {type(data)}")
+        if "name" in data and "steps" in data:
+            return data  # programmatic construction
         if len(data) != 1:
             raise ValueError("Branch must be a single-key dict")
         name, body = next(iter(data.items()))
         if not isinstance(body, dict) or "steps" not in body:
             raise ValueError(f"Branch '{name}' must have a 'steps' field")
         return {"name": name, "steps": body["steps"]}
+
+    @model_serializer
+    def _serialize(self) -> Dict[str, Any]:
+        steps = [s.model_dump(by_alias=True, exclude_none=True) for s in self.steps]
+        return {self.name: {"steps": steps}}
 
 
 # =============================================================================
@@ -298,6 +319,10 @@ class ParallelStep(BaseModel):
 
 
 def try_body_discriminator(data: Any) -> str:
+    if isinstance(data, TryCallBody):
+        return "call"
+    if isinstance(data, TryStepsBody):
+        return "steps"
     if not isinstance(data, dict):
         raise ValueError("Try body must be a dict")
     if "call" in data:
@@ -322,7 +347,7 @@ TryBody = Annotated[
 def retry_discriminator(data: Any) -> str:
     if isinstance(data, str):
         return "predefined"
-    if isinstance(data, dict):
+    if isinstance(data, (dict, RetryConfig)):
         return "custom"
     raise ValueError("Retry must be a string expression or config dict")
 
@@ -350,7 +375,23 @@ class TryStep(BaseModel):
 
 
 def step_body_discriminator(data: Any) -> str:
-    """Determine step type from the keys present in the dict."""
+    """Determine step type from the keys present in the dict or model instance."""
+    # Handle already-instantiated model objects (programmatic construction)
+    _INSTANCE_TAG_MAP = {
+        TryStep: "try",
+        ParallelStep: "parallel",
+        ForStep: "for",
+        SwitchStep: "switch",
+        CallStep: "call",
+        AssignStep: "assign",
+        ReturnStep: "return",
+        RaiseStep: "raise",
+        NestedStepsStep: "steps",
+    }
+    for cls, tag in _INSTANCE_TAG_MAP.items():
+        if isinstance(data, cls):
+            return tag
+    # Handle raw dicts (YAML parsing)
     if not isinstance(data, dict):
         raise ValueError(f"Step body must be a dict, got {type(data)}")
     keys = set(data.keys())
@@ -413,12 +454,19 @@ class Step(BaseModel):
     def from_raw(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             raise ValueError(f"Step must be a dict, got {type(data)}")
+        if "name" in data and "body" in data:
+            return data  # programmatic construction
         if len(data) != 1:
             raise ValueError(
                 f"Step must be a single-key dict, got {len(data)} keys: {list(data.keys())}"
             )
         name, body = next(iter(data.items()))
         return {"name": name, "body": body}
+
+    @model_serializer
+    def _serialize(self) -> Dict[str, Any]:
+        body_dict = self.body.model_dump(by_alias=True, exclude_none=True)
+        return {self.name: body_dict}
 
 
 # =============================================================================
@@ -471,7 +519,17 @@ class SimpleWorkflow(BaseModel):
     def from_raw(cls, data: Any) -> Any:
         if isinstance(data, list):
             return {"steps": data}
-        raise ValueError("SimpleWorkflow expects a list")
+        if isinstance(data, dict):
+            return data
+        raise ValueError("SimpleWorkflow expects a list or dict")
+
+    def to_dict(self) -> List[Dict[str, Any]]:
+        """Serialize to the YAML-compatible list-of-step-dicts format."""
+        return self.model_dump(by_alias=True, exclude_none=True)["steps"]
+
+    def to_yaml(self) -> str:
+        """Serialize to a YAML string."""
+        return yaml.dump(self.to_dict(), default_flow_style=False, sort_keys=False)
 
 
 # =============================================================================
@@ -490,14 +548,24 @@ class SubworkflowsWorkflow(BaseModel):
     @classmethod
     def from_raw(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            if len(data) == 1 and "workflows" in data:
+                return data  # programmatic construction
             if "main" not in data:
                 raise ValueError("Form B requires a 'main' key")
             return {"workflows": data}
         raise ValueError("SubworkflowsWorkflow expects a dict")
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to the YAML-compatible dict-of-workflows format."""
+        return self.model_dump(by_alias=True, exclude_none=True)["workflows"]
+
+    def to_yaml(self) -> str:
+        """Serialize to a YAML string."""
+        return yaml.dump(self.to_dict(), default_flow_style=False, sort_keys=False)
+
 
 # =============================================================================
-# 24. Workflow union type + parse_workflow function
+# 24. Workflow union type + parse_workflow + to_yaml
 # =============================================================================
 
 Workflow = Union[SimpleWorkflow, SubworkflowsWorkflow]
@@ -512,6 +580,15 @@ def parse_workflow(yaml_str: str) -> Workflow:
         return SubworkflowsWorkflow.model_validate(raw)
     else:
         raise ValueError("Workflow must be a list or dict")
+
+
+def to_yaml(workflow: Workflow) -> str:
+    """Serialize any Workflow to a YAML string."""
+    if isinstance(workflow, (SimpleWorkflow, SubworkflowsWorkflow)):
+        return workflow.to_yaml()
+    raise TypeError(
+        f"Expected SimpleWorkflow or SubworkflowsWorkflow, got {type(workflow)}"
+    )
 
 
 # =============================================================================

@@ -1,6 +1,6 @@
 # cloud-workflows-validator
 
-A Pydantic v2 YAML validator for Google Cloud Workflows syntax. Parses GCP Workflows YAML into strongly-typed Python models and performs three layers of validation: structural, expression syntax, and variable resolution.
+A Pydantic v2 YAML validator and builder for Google Cloud Workflows syntax. Parses GCP Workflows YAML into strongly-typed Python models, performs three layers of validation (structural, expression syntax, variable resolution), and supports programmatic workflow construction with serialization back to YAML.
 
 ## Requirements
 
@@ -42,6 +42,88 @@ print(result.warnings)       # []
 print(type(result.workflow))  # <class 'cloud_workflows.models.SimpleWorkflow'>
 ```
 
+## Programmatic Construction
+
+Build workflows in Python and serialize to YAML. Uses the same Pydantic model classes as the parser — no separate builder layer.
+
+```python
+from cloud_workflows import (
+    SimpleWorkflow, Step, AssignStep, CallStep, ReturnStep,
+    expr, to_yaml, analyze_workflow,
+)
+
+workflow = SimpleWorkflow(steps=[
+    Step(name="init", body=AssignStep(assign=[
+        {"name": "Alice"},
+        {"greeting": expr('"Hello, " + name')},
+    ])),
+    Step(name="log", body=CallStep(
+        call="sys.log",
+        args={"text": expr("greeting")},
+    )),
+    Step(name="done", body=ReturnStep(return_=expr("greeting"))),
+])
+
+# Serialize to YAML
+print(to_yaml(workflow))
+
+# Validate (structural + expression + variable analysis)
+result = analyze_workflow(workflow)
+print(result.is_valid)  # True
+```
+
+Output YAML:
+
+```yaml
+- init:
+    assign:
+      - name: Alice
+      - greeting: '${"Hello, " + name}'
+- log:
+    call: sys.log
+    args:
+      text: ${greeting}
+- done:
+    return: ${greeting}
+```
+
+### Subworkflows
+
+```python
+from cloud_workflows import (
+    SubworkflowsWorkflow, WorkflowDefinition, Step,
+    AssignStep, CallStep, ReturnStep,
+)
+
+workflow = SubworkflowsWorkflow(workflows={
+    "main": WorkflowDefinition(steps=[
+        Step(name="call_helper", body=CallStep(
+            call="greet", args={"person": "Alice"}, result="msg",
+        )),
+        Step(name="done", body=ReturnStep(return_="${msg}")),
+    ]),
+    "greet": WorkflowDefinition(
+        params=["person"],
+        steps=[
+            Step(name="build", body=AssignStep(assign=[
+                {"greeting": '${"Hello, " + person}'},
+            ])),
+            Step(name="reply", body=ReturnStep(return_="${greeting}")),
+        ],
+    ),
+})
+```
+
+### Key points
+
+- **Aliases handle Python reserved words**: use `return_`, `raise_`, `for_`, `in_`, `as_`, `except_`, `try_` as field names. Serialization emits the correct YAML keys automatically.
+- **`expr()` helper**: wraps a string in `${...}` syntax — `expr("x + 1")` produces `"${x + 1}"`.
+- **`to_yaml(workflow)`**: serializes any `SimpleWorkflow` or `SubworkflowsWorkflow` to a YAML string.
+- **`analyze_workflow(workflow)`**: runs the full 3-stage validation pipeline on a programmatically-constructed workflow (no YAML round-trip needed).
+- **Round-trip fidelity**: `parse_workflow(to_yaml(workflow))` produces an equivalent model.
+
+---
+
 ## Public API
 
 ### Parsing only (structural validation)
@@ -52,12 +134,22 @@ print(type(result.workflow))  # <class 'cloud_workflows.models.SimpleWorkflow'>
 | `validate_yaml(yaml_str)` | Alias for `parse_workflow` |
 | `validate_file(path)` | Parse a YAML file into a `Workflow` model |
 
+### Serialization (programmatic → YAML)
+
+| Function | Description |
+|---|---|
+| `to_yaml(workflow)` | Serialize a `SimpleWorkflow` or `SubworkflowsWorkflow` to YAML |
+| `expr(body)` | Wrap string in `${...}` syntax |
+| `workflow.to_dict()` | Serialize to Python dict/list (on `SimpleWorkflow`/`SubworkflowsWorkflow`) |
+| `workflow.to_yaml()` | Serialize to YAML string (on `SimpleWorkflow`/`SubworkflowsWorkflow`) |
+
 ### Full analysis pipeline
 
 | Function | Description |
 |---|---|
 | `analyze_yaml(yaml_str)` | Parse + validate expressions + analyze variables |
 | `analyze_file(path)` | Same as `analyze_yaml` but reads from a file |
+| `analyze_workflow(workflow)` | Same as `analyze_yaml` but takes a model (no YAML round-trip) |
 
 Both return an `AnalysisResult` with:
 
@@ -425,6 +517,10 @@ For expression references, `extract_variable_references()` similarly returns onl
 cloud-workflows-validator/
     pyproject.toml
     README.md
+    .opencode/
+        skills/
+            pydantic-v2/
+                SKILL.md        Pydantic v2 patterns reference (OpenCode agent skill)
     docs/
         01_overview.md          GCP Workflows top-level structure
         02_steps.md             Step type schemas
@@ -435,14 +531,15 @@ cloud-workflows-validator/
         07_test_fixtures.md     YAML test examples and conventions
     src/cloud_workflows/
         __init__.py             Public API
-        models.py               Pydantic v2 models (530 lines)
+        models.py               Pydantic v2 models + serialization (607 lines)
         expressions.py          Lexer + parser (604 lines)
         variables.py            Variable analyzer (492 lines)
-        parser.py               Pipeline functions (83 lines)
+        parser.py               Pipeline functions + analyze_workflow (108 lines)
     tests/
         conftest.py             Shared helpers (parse, load_fixture, parse_fixture)
         test_assign.py          Assign step tests
         test_call.py            Call step tests
+        test_cdk.py             Programmatic construction + serialization tests (71 tests)
         test_expressions.py     Expression lexer/parser tests (120 tests)
         test_for.py             For loop tests
         test_integration.py     Full workflow integration tests
@@ -456,6 +553,7 @@ cloud-workflows-validator/
         fixtures/
             assign/             Assign step YAML fixtures
             call/               Call step YAML fixtures
+            cdk/                Programmatic construction YAML fixtures (7 files)
             expressions/        Expression validation YAML fixtures
             for/                For loop YAML fixtures
             integration/        Full workflow YAML fixtures
@@ -474,4 +572,4 @@ cloud-workflows-validator/
 python -m pytest tests/ -v
 ```
 
-201 tests total: 52 structural, 120 expression, 29 variable tracking.
+272 tests total: 52 structural, 120 expression, 29 variable tracking, 71 programmatic construction/serialization.
