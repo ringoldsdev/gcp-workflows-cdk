@@ -27,18 +27,22 @@ from typing import (
     Callable,
     Dict,
     List,
+    Literal,
     Optional,
     Union,
     cast,
+    overload,
 )
 
 from .models import (
     AssignStep,
     CallStep,
+    ExceptBody,
     ForStep,
     NestedStepsStep,
     ParallelStep,
     RaiseStep,
+    RetryConfig,
     ReturnStep,
     SimpleWorkflow,
     Step,
@@ -58,6 +62,25 @@ from .steps import (
     Switch,
     Try_,
 )
+
+# Union of all Pydantic step model types
+_StepModel = Union[
+    AssignStep,
+    CallStep,
+    ReturnStep,
+    RaiseStep,
+    SwitchStep,
+    ForStep,
+    ParallelStep,
+    TryStep,
+    NestedStepsStep,
+]
+
+# Union of all sub-builder types
+_SubBuilder = Union[Assign, Call, Return_, Raise_, Switch, For, Parallel, Try_, Steps]
+
+# Union type for switch condition dicts
+_SwitchConditionDict = Dict[str, Any]
 
 __all__ = [
     "StepBuilder",
@@ -99,6 +122,254 @@ class StepBuilder:
 
     def __init__(self) -> None:
         self._steps: List[Step] = []
+
+    # -----------------------------------------------------------------
+    # Overloads: Passthrough forms (dict, Pydantic model, sub-builder)
+    # -----------------------------------------------------------------
+
+    @overload
+    def step(self, name: str, body: Dict[str, Any], /) -> StepBuilder: ...
+    @overload
+    def step(self, name: str, body: _StepModel, /) -> StepBuilder: ...
+    @overload
+    def step(self, name: str, body: _SubBuilder, /) -> StepBuilder: ...
+
+    # -----------------------------------------------------------------
+    # Overloads: "assign" — lambda and kwargs
+    # -----------------------------------------------------------------
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["assign"],
+        configurator: Callable[[Assign], Any],
+        /,
+    ) -> StepBuilder: ...
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["assign"],
+        /,
+        *,
+        items: List[Dict[str, Any]],
+        next: Optional[str] = ...,
+    ) -> StepBuilder: ...
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["assign"],
+        /,
+        **assignments: Any,
+    ) -> StepBuilder: ...
+
+    # -----------------------------------------------------------------
+    # Overloads: "call" — lambda and kwargs
+    # -----------------------------------------------------------------
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["call"],
+        configurator: Callable[[Call], Any],
+        /,
+    ) -> StepBuilder: ...
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["call"],
+        /,
+        *,
+        func: str = ...,
+        args: Optional[Dict[str, Any]] = ...,
+        result: Optional[str] = ...,
+        next: Optional[str] = ...,
+    ) -> StepBuilder: ...
+
+    # -----------------------------------------------------------------
+    # Overloads: "return" — lambda and kwargs
+    # -----------------------------------------------------------------
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["return"],
+        configurator: Callable[[Return_], Any],
+        /,
+    ) -> StepBuilder: ...
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["return"],
+        /,
+        *,
+        value: Any = ...,
+    ) -> StepBuilder: ...
+
+    # -----------------------------------------------------------------
+    # Overloads: "raise" — lambda and kwargs
+    # -----------------------------------------------------------------
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["raise"],
+        configurator: Callable[[Raise_], Any],
+        /,
+    ) -> StepBuilder: ...
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["raise"],
+        /,
+        *,
+        value: Any = ...,
+    ) -> StepBuilder: ...
+
+    # -----------------------------------------------------------------
+    # Overloads: "switch" — lambda and kwargs
+    # -----------------------------------------------------------------
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["switch"],
+        configurator: Callable[[Switch], Any],
+        /,
+    ) -> StepBuilder: ...
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["switch"],
+        /,
+        *,
+        conditions: List[_SwitchConditionDict] = ...,
+        next: Optional[str] = ...,
+    ) -> StepBuilder: ...
+
+    # -----------------------------------------------------------------
+    # Overloads: "for" — lambda and kwargs
+    # -----------------------------------------------------------------
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["for"],
+        configurator: Callable[[For], Any],
+        /,
+        *,
+        value: str = ...,
+    ) -> StepBuilder: ...
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["for"],
+        /,
+        *,
+        value: str = ...,
+        in_: Optional[Any] = ...,
+        range_: Optional[Any] = ...,
+        index: Optional[str] = ...,
+        steps: Any = ...,
+    ) -> StepBuilder: ...
+
+    # -----------------------------------------------------------------
+    # Overloads: "parallel" — lambda and kwargs
+    # -----------------------------------------------------------------
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["parallel"],
+        configurator: Callable[[Parallel], Any],
+        /,
+    ) -> StepBuilder: ...
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["parallel"],
+        /,
+        *,
+        branches: Dict[str, Any] = ...,
+        shared: Optional[List[str]] = ...,
+        exception_policy: Optional[str] = ...,
+        concurrency_limit: Optional[Union[int, str]] = ...,
+    ) -> StepBuilder: ...
+
+    # -----------------------------------------------------------------
+    # Overloads: "try" — lambda and kwargs
+    # -----------------------------------------------------------------
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["try"],
+        configurator: Callable[[Try_], Any],
+        /,
+    ) -> StepBuilder: ...
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["try"],
+        /,
+        *,
+        body: Any = ...,
+        retry: Optional[Union[Dict[str, Any], RetryConfig, str]] = ...,
+        except_: Optional[Union[Dict[str, Any], ExceptBody]] = ...,
+    ) -> StepBuilder: ...
+
+    # -----------------------------------------------------------------
+    # Overloads: "steps" — lambda and kwargs
+    # -----------------------------------------------------------------
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["steps"],
+        configurator: Callable[[Steps], Any],
+        /,
+    ) -> StepBuilder: ...
+
+    @overload
+    def step(
+        self,
+        name: str,
+        type: Literal["steps"],
+        /,
+        *,
+        body: Any = ...,
+        next: Optional[str] = ...,
+    ) -> StepBuilder: ...
+
+    # -----------------------------------------------------------------
+    # Implementation
+    # -----------------------------------------------------------------
 
     def step(
         self,

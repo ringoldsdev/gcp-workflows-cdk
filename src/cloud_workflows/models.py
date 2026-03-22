@@ -113,8 +113,8 @@ class SwitchCondition(BaseModel):
     next: Optional[str] = None
     steps: Optional[List[Step]] = None
     assign: Optional[List[Dict[str, Any]]] = None
-    return_: Optional[Any] = Field(None, alias="return")
-    raise_: Optional[Any] = Field(None, alias="raise")
+    return_: Optional[Any] = Field(default=None, alias="return")
+    raise_: Optional[Any] = Field(default=None, alias="raise")
 
 
 # =============================================================================
@@ -126,7 +126,7 @@ class SwitchStep(BaseModel):
     model_config = ConfigDict(strict=False, populate_by_name=True)
 
     switch: List[SwitchCondition] = Field(..., min_length=1, max_length=50)
-    next: Optional[str] = Field(None, alias="next")
+    next: Optional[str] = Field(default=None, alias="next")
 
 
 # =============================================================================
@@ -172,7 +172,7 @@ class ForBody(BaseModel):
 
     value: str
     index: Optional[str] = None
-    in_: Optional[Any] = Field(None, alias="in")
+    in_: Optional[Any] = Field(default=None, alias="in")
     range: Optional[Any] = None
     steps: List[Step]
 
@@ -196,7 +196,7 @@ class AssignStep(BaseModel):
     model_config = ConfigDict(strict=False, populate_by_name=True)
 
     assign: List[Dict[str, Any]] = Field(..., min_length=1, max_length=50)
-    next: Optional[str] = Field(None, alias="next")
+    next: Optional[str] = Field(default=None, alias="next")
 
     @field_validator("assign", mode="before")
     @classmethod
@@ -222,7 +222,7 @@ class CallStep(BaseModel):
     call: str
     args: Optional[Dict[str, Any]] = None
     result: Optional[str] = None
-    next: Optional[str] = Field(None, alias="next")
+    next: Optional[str] = Field(default=None, alias="next")
 
 
 # =============================================================================
@@ -256,7 +256,7 @@ class NestedStepsStep(BaseModel):
     model_config = ConfigDict(strict=False, populate_by_name=True)
 
     steps: List[Step]
-    next: Optional[str] = Field(None, alias="next")
+    next: Optional[str] = Field(default=None, alias="next")
 
 
 # =============================================================================
@@ -282,7 +282,7 @@ class ParallelBody(BaseModel):
     shared: Optional[List[str]] = None
     concurrency_limit: Optional[Union[int, str]] = None
     branches: Optional[List[Branch]] = None
-    for_: Optional[ForBody] = Field(None, alias="for")
+    for_: Optional[ForBody] = Field(default=None, alias="for")
 
     @model_validator(mode="after")
     def validate_mutual_exclusivity(self) -> ParallelBody:
@@ -366,7 +366,7 @@ class TryStep(BaseModel):
 
     try_: TryBody = Field(..., alias="try")
     retry: Optional[RetryPolicy] = None
-    except_: Optional[ExceptBody] = Field(None, alias="except")
+    except_: Optional[ExceptBody] = Field(default=None, alias="except")
 
 
 # =============================================================================
