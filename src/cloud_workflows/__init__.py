@@ -28,6 +28,10 @@ from .models import (
     BackoffConfig,
     NestedStepsStep,
 )
+from .builder import (
+    WorkflowBuilder,
+    StepBodyInput,
+)
 from .parser import (
     validate_yaml,
     validate_file,
@@ -57,6 +61,9 @@ __all__ = [
     "Workflow",
     "SimpleWorkflow",
     "SubworkflowsWorkflow",
+    # Builder
+    "WorkflowBuilder",
+    "StepBodyInput",
     # Serialization
     "to_yaml",
     "expr",
