@@ -1,16 +1,17 @@
 """Tests for programmatic workflow construction and serialization (CDK layer).
 
+Consolidated from the original test_cdk.py:
+- Removed 14 test_to_dict_* methods (strict subsets of test_yaml_matches_fixture)
+- Removed 7 TestDictRoundTrip tests (already covered by fixture match + parsing tests)
+- Removed 7 TestConstructionValidation tests (duplicate of YAML-based validation tests)
+- Merged small 2-test classes into TestCdkEdgeCases
+
 Each test constructs a workflow programmatically using the Pydantic model classes,
 serializes via to_yaml()/to_dict(), and verifies:
   - YAML output matches the corresponding fixture file
   - analyze_yaml() on the serialized YAML passes all 3 validation stages
   - analyze_workflow() on the model directly passes all 3 validation stages
 """
-
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 import yaml
@@ -111,26 +112,6 @@ class TestSimpleAssign:
     def test_passes_analysis(self, workflow):
         assert_passes_analysis(workflow)
 
-    def test_to_dict_returns_list(self, workflow):
-        result = workflow.to_dict()
-        assert isinstance(result, list)
-        assert len(result) == 2
-
-    def test_to_dict_step_names(self, workflow):
-        result = workflow.to_dict()
-        assert "init" in result[0]
-        assert "done" in result[1]
-
-    def test_to_dict_assign_values(self, workflow):
-        result = workflow.to_dict()
-        assign_body = result[0]["init"]["assign"]
-        assert assign_body == [{"x": 10}, {"y": 20}]
-
-    def test_to_dict_return_expression(self, workflow):
-        result = workflow.to_dict()
-        return_body = result[1]["done"]["return"]
-        assert return_body == "${x + y}"
-
     def test_model_structure(self, workflow):
         assert isinstance(workflow, SimpleWorkflow)
         assert len(workflow.steps) == 2
@@ -180,21 +161,6 @@ class TestSubworkflows:
     def test_passes_analysis(self, workflow):
         assert_passes_analysis(workflow)
 
-    def test_to_dict_returns_dict(self, workflow):
-        result = workflow.to_dict()
-        assert isinstance(result, dict)
-        assert "main" in result
-        assert "helper" in result
-
-    def test_to_dict_main_has_steps(self, workflow):
-        result = workflow.to_dict()
-        assert "steps" in result["main"]
-        assert len(result["main"]["steps"]) == 2
-
-    def test_to_dict_helper_has_params(self, workflow):
-        result = workflow.to_dict()
-        assert result["helper"]["params"] == ["input"]
-
     def test_model_structure(self, workflow):
         assert isinstance(workflow, SubworkflowsWorkflow)
         assert "main" in workflow.workflows
@@ -241,13 +207,6 @@ class TestForLoop:
     def test_passes_analysis(self, workflow):
         assert_passes_analysis(workflow)
 
-    def test_to_dict_for_body(self, workflow):
-        result = workflow.to_dict()
-        for_body = result[0]["loop"]["for"]
-        assert for_body["value"] == "item"
-        assert for_body["in"] == ["a", "b", "c"]
-        assert "steps" in for_body
-
     def test_model_structure(self, workflow):
         step = workflow.steps[0]
         assert isinstance(step.body, ForStep)
@@ -287,15 +246,6 @@ class TestSwitch:
 
     def test_passes_analysis(self, workflow):
         assert_passes_analysis(workflow)
-
-    def test_to_dict_switch_conditions(self, workflow):
-        result = workflow.to_dict()
-        switch_body = result[1]["check"]["switch"]
-        assert len(switch_body) == 2
-        assert switch_body[0]["condition"] == "${x > 0}"
-        assert switch_body[0]["next"] == "positive"
-        assert switch_body[1]["condition"] is True
-        assert switch_body[1]["next"] == "negative"
 
 
 # =============================================================================
@@ -352,14 +302,6 @@ class TestParallelBranches:
     def test_passes_analysis(self, workflow):
         assert_passes_analysis(workflow)
 
-    def test_to_dict_branches(self, workflow):
-        result = workflow.to_dict()
-        parallel = result[0]["parallel_work"]["parallel"]
-        branches = parallel["branches"]
-        assert len(branches) == 2
-        assert "branch1" in branches[0]
-        assert "branch2" in branches[1]
-
 
 # =============================================================================
 # Test: Try/except/retry
@@ -408,26 +350,6 @@ class TestTryExceptRetry:
     def test_passes_analysis(self, workflow):
         assert_passes_analysis(workflow)
 
-    def test_to_dict_try_structure(self, workflow):
-        result = workflow.to_dict()
-        try_body = result[0]["try_call"]
-        assert "try" in try_body
-        assert try_body["try"]["call"] == "http.get"
-        assert try_body["try"]["result"] == "response"
-
-    def test_to_dict_retry_config(self, workflow):
-        result = workflow.to_dict()
-        retry = result[0]["try_call"]["retry"]
-        assert retry["predicate"] == "${e.code == 429}"
-        assert retry["max_retries"] == 3
-        assert retry["backoff"]["initial_delay"] == 1
-
-    def test_to_dict_except_body(self, workflow):
-        result = workflow.to_dict()
-        except_body = result[0]["try_call"]["except"]
-        assert except_body["as"] == "e"
-        assert len(except_body["steps"]) == 1
-
 
 # =============================================================================
 # Test: Nested steps
@@ -466,13 +388,6 @@ class TestNestedSteps:
 
     def test_passes_analysis(self, workflow):
         assert_passes_analysis(workflow)
-
-    def test_to_dict_nested_structure(self, workflow):
-        result = workflow.to_dict()
-        group = result[0]["group"]
-        assert "steps" in group
-        assert len(group["steps"]) == 2
-        assert group["next"] == "done"
 
 
 # =============================================================================
@@ -543,52 +458,6 @@ class TestExprHelper:
 
 
 # =============================================================================
-# Test: Dict-level round-trip (parse fixture → to_dict → compare)
-# =============================================================================
-
-
-class TestDictRoundTrip:
-    """Parse existing YAML fixtures, serialize back via to_dict(), and verify equivalence."""
-
-    def _round_trip(self, *fixture_path_parts):
-        """Load fixture, parse it, serialize to dict, compare to original."""
-        yaml_str = load_fixture(*fixture_path_parts)
-        original = yaml.safe_load(yaml_str)
-
-        # Parse fixture into a model
-        wf = parse_fixture(*fixture_path_parts)
-
-        # Serialize back to dict
-        serialized = wf.to_dict()
-        assert serialized == original, (
-            f"Round-trip mismatch for {'/'.join(fixture_path_parts)}:\n"
-            f"  original:   {original}\n"
-            f"  serialized: {serialized}"
-        )
-
-    def test_simple_assign(self):
-        self._round_trip("cdk", "simple_assign.yaml")
-
-    def test_subworkflows(self):
-        self._round_trip("cdk", "subworkflows.yaml")
-
-    def test_for_loop(self):
-        self._round_trip("cdk", "for_loop.yaml")
-
-    def test_switch(self):
-        self._round_trip("cdk", "switch.yaml")
-
-    def test_parallel_branches(self):
-        self._round_trip("cdk", "parallel_branches.yaml")
-
-    def test_try_except_retry(self):
-        self._round_trip("cdk", "try_except_retry.yaml")
-
-    def test_nested_steps(self):
-        self._round_trip("cdk", "nested_steps.yaml")
-
-
-# =============================================================================
 # Test: analyze_workflow() direct validation
 # =============================================================================
 
@@ -599,66 +468,6 @@ class TestAnalyzeWorkflow:
     def test_invalid_type_raises(self):
         with pytest.raises(TypeError):
             analyze_workflow("not a workflow")
-
-
-# =============================================================================
-# Test: Validation errors on invalid programmatic construction
-# =============================================================================
-
-from pydantic import ValidationError
-
-
-class TestConstructionValidation:
-    """Pydantic validates constraints during programmatic construction."""
-
-    def test_assign_empty_list_rejected(self):
-        with pytest.raises(ValidationError):
-            AssignStep(assign=[])
-
-    def test_assign_multi_key_dict_rejected(self):
-        with pytest.raises(ValidationError):
-            AssignStep(assign=[{"a": 1, "b": 2}])
-
-    def test_for_both_in_and_range_rejected(self):
-        with pytest.raises(ValidationError):
-            ForBody(
-                value="x",
-                in_=[1, 2],
-                range=[1, 10],
-                steps=[Step(name="s", body=ReturnStep(return_="ok"))],
-            )
-
-    def test_for_neither_in_nor_range_rejected(self):
-        with pytest.raises(ValidationError):
-            ForBody(
-                value="x",
-                steps=[Step(name="s", body=ReturnStep(return_="ok"))],
-            )
-
-    def test_parallel_fewer_than_2_branches_rejected(self):
-        with pytest.raises(ValidationError):
-            ParallelBody(
-                branches=[
-                    Branch(
-                        name="only_one",
-                        steps=[
-                            Step(name="s", body=ReturnStep(return_="ok")),
-                        ],
-                    ),
-                ]
-            )
-
-    def test_switch_empty_conditions_rejected(self):
-        with pytest.raises(ValidationError):
-            SwitchStep(switch=[])
-
-    def test_retry_zero_max_retries_rejected(self):
-        with pytest.raises(ValidationError):
-            RetryConfig(
-                predicate="${true}",
-                max_retries=0,
-                backoff=BackoffConfig(initial_delay=1, max_delay=10, multiplier=2),
-            )
 
 
 # =============================================================================
@@ -714,16 +523,18 @@ class TestTryWithStepsBody:
 
 
 # =============================================================================
-# Test: Call step with next
+# Test: CDK edge cases (merged from small 2-test classes)
 # =============================================================================
 
 
-class TestCallWithNext:
-    """Call step using the next field for flow control."""
+class TestCdkEdgeCases:
+    """Edge cases: call/assign with next, for with range, parallel for,
+    switch with embedded actions, raise step."""
 
-    @pytest.fixture
-    def workflow(self):
-        return SimpleWorkflow(
+    # -- Call with next --
+
+    def test_call_next_serialized(self):
+        w = SimpleWorkflow(
             steps=[
                 Step(
                     name="do_call",
@@ -737,60 +548,59 @@ class TestCallWithNext:
                 Step(name="final", body=ReturnStep(return_="done")),
             ]
         )
+        result = w.to_dict()
+        assert result[0]["do_call"]["next"] == "final"
 
-    def test_next_serialized(self, workflow):
-        result = workflow.to_dict()
-        call_body = result[0]["do_call"]
-        assert call_body["next"] == "final"
+    def test_call_next_passes_analysis(self):
+        w = SimpleWorkflow(
+            steps=[
+                Step(
+                    name="do_call",
+                    body=CallStep(
+                        call="sys.log",
+                        args={"text": "hello"},
+                        next="final",
+                    ),
+                ),
+                Step(name="skipped", body=ReturnStep(return_="skipped")),
+                Step(name="final", body=ReturnStep(return_="done")),
+            ]
+        )
+        assert_passes_analysis(w)
 
-    def test_passes_analysis(self, workflow):
-        assert_passes_analysis(workflow)
+    # -- Assign with next --
 
-
-# =============================================================================
-# Test: Assign step with next
-# =============================================================================
-
-
-class TestAssignWithNext:
-    """Assign step using the next field for flow control."""
-
-    @pytest.fixture
-    def workflow(self):
-        return SimpleWorkflow(
+    def test_assign_next_serialized(self):
+        w = SimpleWorkflow(
             steps=[
                 Step(
                     name="init",
-                    body=AssignStep(
-                        assign=[{"x": 1}],
-                        next="end",
-                    ),
+                    body=AssignStep(assign=[{"x": 1}], next="end"),
                 ),
                 Step(name="skipped", body=ReturnStep(return_="skipped")),
                 Step(name="end", body=ReturnStep(return_=expr("x"))),
             ]
         )
+        result = w.to_dict()
+        assert result[0]["init"]["next"] == "end"
 
-    def test_next_serialized(self, workflow):
-        result = workflow.to_dict()
-        assign_body = result[0]["init"]
-        assert assign_body["next"] == "end"
+    def test_assign_next_passes_analysis(self):
+        w = SimpleWorkflow(
+            steps=[
+                Step(
+                    name="init",
+                    body=AssignStep(assign=[{"x": 1}], next="end"),
+                ),
+                Step(name="skipped", body=ReturnStep(return_="skipped")),
+                Step(name="end", body=ReturnStep(return_=expr("x"))),
+            ]
+        )
+        assert_passes_analysis(w)
 
-    def test_passes_analysis(self, workflow):
-        assert_passes_analysis(workflow)
+    # -- For with range --
 
-
-# =============================================================================
-# Test: For loop with range
-# =============================================================================
-
-
-class TestForRange:
-    """For loop with range instead of 'in'."""
-
-    @pytest.fixture
-    def workflow(self):
-        return SimpleWorkflow(
+    def test_for_range_serialized(self):
+        w = SimpleWorkflow(
             steps=[
                 Step(
                     name="count",
@@ -802,8 +612,7 @@ class TestForRange:
                                 Step(
                                     name="log",
                                     body=CallStep(
-                                        call="sys.log",
-                                        args={"text": expr("i")},
+                                        call="sys.log", args={"text": expr("i")}
                                     ),
                                 ),
                             ],
@@ -812,28 +621,39 @@ class TestForRange:
                 ),
             ]
         )
-
-    def test_serializes_with_range(self, workflow):
-        result = workflow.to_dict()
+        result = w.to_dict()
         for_body = result[0]["count"]["for"]
         assert for_body["range"] == [1, 10]
         assert "in" not in for_body
 
-    def test_passes_analysis(self, workflow):
-        assert_passes_analysis(workflow)
+    def test_for_range_passes_analysis(self):
+        w = SimpleWorkflow(
+            steps=[
+                Step(
+                    name="count",
+                    body=ForStep(
+                        for_=ForBody(
+                            value="i",
+                            range=[1, 10],
+                            steps=[
+                                Step(
+                                    name="log",
+                                    body=CallStep(
+                                        call="sys.log", args={"text": expr("i")}
+                                    ),
+                                ),
+                            ],
+                        )
+                    ),
+                ),
+            ]
+        )
+        assert_passes_analysis(w)
 
+    # -- Parallel for --
 
-# =============================================================================
-# Test: Parallel for
-# =============================================================================
-
-
-class TestParallelFor:
-    """Parallel step with a for loop instead of branches."""
-
-    @pytest.fixture
-    def workflow(self):
-        return SimpleWorkflow(
+    def test_parallel_for_serialized(self):
+        w = SimpleWorkflow(
             steps=[
                 Step(
                     name="parallel_loop",
@@ -858,29 +678,44 @@ class TestParallelFor:
                 ),
             ]
         )
-
-    def test_serializes_with_for(self, workflow):
-        result = workflow.to_dict()
+        result = w.to_dict()
         parallel = result[0]["parallel_loop"]["parallel"]
         assert "for" in parallel
         assert parallel["shared"] == ["results"]
         assert "branches" not in parallel
 
-    def test_passes_analysis(self, workflow):
-        assert_passes_analysis(workflow)
+    def test_parallel_for_passes_analysis(self):
+        w = SimpleWorkflow(
+            steps=[
+                Step(
+                    name="parallel_loop",
+                    body=ParallelStep(
+                        parallel=ParallelBody(
+                            shared=["results"],
+                            for_=ForBody(
+                                value="item",
+                                in_=["a", "b", "c"],
+                                steps=[
+                                    Step(
+                                        name="process",
+                                        body=CallStep(
+                                            call="sys.log",
+                                            args={"text": expr("item")},
+                                        ),
+                                    ),
+                                ],
+                            ),
+                        )
+                    ),
+                ),
+            ]
+        )
+        assert_passes_analysis(w)
 
+    # -- Switch with embedded return --
 
-# =============================================================================
-# Test: Switch with embedded assign and return
-# =============================================================================
-
-
-class TestSwitchWithEmbeddedActions:
-    """Switch conditions with embedded assign and return actions."""
-
-    @pytest.fixture
-    def workflow(self):
-        return SimpleWorkflow(
+    def test_switch_embedded_return_serialized(self):
+        w = SimpleWorkflow(
             steps=[
                 Step(name="init", body=AssignStep(assign=[{"x": 5}])),
                 Step(
@@ -888,59 +723,53 @@ class TestSwitchWithEmbeddedActions:
                     body=SwitchStep(
                         switch=[
                             SwitchCondition(
-                                condition=expr("x > 0"),
-                                return_="positive",
+                                condition=expr("x > 0"), return_="positive"
                             ),
-                            SwitchCondition(
-                                condition=True,
-                                return_="non-positive",
-                            ),
+                            SwitchCondition(condition=True, return_="non-positive"),
                         ]
                     ),
                 ),
             ]
         )
-
-    def test_serializes_return_in_condition(self, workflow):
-        result = workflow.to_dict()
+        result = w.to_dict()
         conditions = result[1]["decide"]["switch"]
         assert conditions[0]["return"] == "positive"
         assert conditions[1]["return"] == "non-positive"
 
-    def test_passes_analysis(self, workflow):
-        assert_passes_analysis(workflow)
-
-
-# =============================================================================
-# Test: Raise step
-# =============================================================================
-
-
-class TestRaiseStep:
-    """Programmatic construction with a raise step."""
-
-    @pytest.fixture
-    def workflow(self):
-        return SimpleWorkflow(
+    def test_switch_embedded_return_passes_analysis(self):
+        w = SimpleWorkflow(
             steps=[
+                Step(name="init", body=AssignStep(assign=[{"x": 5}])),
                 Step(
-                    name="fail",
-                    body=RaiseStep(raise_="Something went wrong"),
+                    name="decide",
+                    body=SwitchStep(
+                        switch=[
+                            SwitchCondition(
+                                condition=expr("x > 0"), return_="positive"
+                            ),
+                            SwitchCondition(condition=True, return_="non-positive"),
+                        ]
+                    ),
                 ),
             ]
         )
+        assert_passes_analysis(w)
 
-    def test_serializes_raise(self, workflow):
-        result = workflow.to_dict()
+    # -- Raise step --
+
+    def test_raise_serialized(self):
+        w = SimpleWorkflow(
+            steps=[
+                Step(name="fail", body=RaiseStep(raise_="Something went wrong")),
+            ]
+        )
+        result = w.to_dict()
         assert result[0]["fail"]["raise"] == "Something went wrong"
 
     def test_raise_with_expression(self):
         w = SimpleWorkflow(
             steps=[
-                Step(
-                    name="fail",
-                    body=RaiseStep(raise_=expr("error_msg")),
-                ),
+                Step(name="fail", body=RaiseStep(raise_=expr("error_msg"))),
             ]
         )
         result = w.to_dict()

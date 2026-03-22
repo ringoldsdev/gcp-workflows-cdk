@@ -1,10 +1,6 @@
 import pytest
 from pydantic import ValidationError
 
-import sys, os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
 from cloud_workflows.models import parse_workflow, SwitchStep
 from conftest import parse_fixture
 

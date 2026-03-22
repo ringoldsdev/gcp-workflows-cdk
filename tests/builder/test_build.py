@@ -1,6 +1,10 @@
 """Tests for the build() function.
 
 build() accepts a list of (filename, workflow) tuples and writes YAML files.
+
+Updated to use cdk/ fixtures instead of build/ fixtures (build/simple.yaml and
+build/multi.yaml are byte-identical duplicates of cdk/simple_assign.yaml and
+cdk/subworkflows.yaml).
 """
 
 import pytest
@@ -39,7 +43,8 @@ class TestBuildWritesFiles:
         assert written[0] == tmp_path / "simple.yaml"
         assert written[0].exists()
 
-        expected = yaml.safe_load(load_fixture("build", "simple.yaml"))
+        # Use cdk/ fixture (was build/simple.yaml, byte-identical)
+        expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
         actual = yaml.safe_load(written[0].read_text(encoding="utf-8"))
         assert actual == expected
 
@@ -77,7 +82,8 @@ class TestBuildWritesFiles:
         assert len(written) == 2
         assert all(p.exists() for p in written)
 
-        expected_multi = yaml.safe_load(load_fixture("build", "multi.yaml"))
+        # Use cdk/ fixture (was build/multi.yaml, byte-identical)
+        expected_multi = yaml.safe_load(load_fixture("cdk", "subworkflows.yaml"))
         actual_multi = yaml.safe_load(written[0].read_text(encoding="utf-8"))
         assert actual_multi == expected_multi
 
@@ -186,7 +192,7 @@ class TestBuildYamlContent:
         assert parsed["helper"]["params"] == ["n"]
 
     def test_round_trip_through_build(self, tmp_path):
-        """Build to file, read back, parse — should match original."""
+        """Build to file, read back, parse -- should match original."""
         from cloud_workflows.models import parse_workflow
 
         steps = StepBuilder().assign("init", x=42).return_("done", value=expr("x"))

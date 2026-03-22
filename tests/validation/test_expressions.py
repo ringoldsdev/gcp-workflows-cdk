@@ -1,9 +1,18 @@
-"""Tests for expression parsing and validation."""
+"""Tests for expression parsing and validation.
 
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+Consolidated from the original test_expressions.py:
+- TestTokenizer: 14 tests
+- TestParserValid: 55 parametrized tests
+- TestParserInvalid: 3 unique inline cases (- +, x y, x @ y) that are NOT in
+  invalid_expressions.yaml
+- TestExpressionExtraction: 9 tests
+- TestValidateAllExpressions: 3 tests
+- TestExtractVariableReferences: 11 tests
+- TestExpressionFixtures: 10 tests (9 valid + 1 parse check)
+- TestInvalidExpressionsFixture: 20 tests (10 fixture-based validation +
+  10 fixture-based recovery) — tautological has_error_node_or_raises removed
+- TestASTSnapshots: 52 parametrized tests (26 snapshot + 26 walk)
+"""
 
 import pytest
 from conftest import load_fixture, parse_fixture
@@ -237,42 +246,29 @@ class TestParserValid:
 
 
 # =============================================================================
-# Parser tests -- invalid expressions
+# Parser tests -- invalid expressions (unique inline only)
 # =============================================================================
 
 
 class TestParserInvalid:
-    """Tests that invalid expressions produce errors."""
+    """Tests for invalid expressions NOT covered by invalid_expressions.yaml.
+
+    The fixture covers: unclosed paren, unclosed string, double operator,
+    trailing operator, unclosed bracket, empty parens, stray colon,
+    unclosed map, map no value, double comma.
+
+    These 3 cases are unique to inline tests:
+    - "- +" (missing expression after unary minus)
+    - "x y" (expression followed by junk)
+    - "x @ y" (unexpected character — tested at lex level)
+    """
 
     @pytest.mark.parametrize(
         "expr,expected_msg",
         [
-            # Unclosed parens
-            ("(x + y", "Expected RPAREN"),
-            # Trailing operator
-            ("x +", "Unexpected token EOF"),
-            # Double operator
-            ("x ++ y", "Unexpected token PLUS"),
-            # Unclosed bracket
-            ("items[0", "Expected RBRACKET"),
-            # Empty parens (not a function call)
-            ("()", "Unexpected token RPAREN"),
-            # Stray colon
-            ("x : y", "Unexpected token COLON"),
-            # Unclosed map
-            ('{"a": 1', "Expected RBRACE"),
-            # Missing map value
-            ('{"a":}', "Unexpected token RBRACE"),
-            # Double comma in list
-            ("[1,, 2]", "Unexpected token COMMA"),
-            # Unclosed string (lex error)
-            ('"hello', "Unterminated string"),
-            # Unexpected character
-            ("x @ y", "Unexpected character"),
-            # Missing expression after unary minus
             ("- +", "Unexpected token PLUS"),
-            # Expression followed by junk
             ("x y", "Unexpected token"),
+            ("x @ y", "Unexpected character"),
         ],
     )
     def test_invalid_expression(self, expr, expected_msg):
@@ -446,7 +442,6 @@ class TestExpressionFixtures:
     def test_valid_fixture_expressions(self, fixture):
         """All expressions in valid fixture files should parse without errors."""
         yaml_str = load_fixture("expressions", fixture)
-        # Parse the workflow to get the model, then validate expressions in the raw YAML
         import yaml
 
         raw = yaml.safe_load(yaml_str)
@@ -485,7 +480,7 @@ def _load_invalid_expressions() -> list[tuple[str, str]]:
     raw = yaml.safe_load(yaml_str)
     results = []
     for key, value in raw.items():
-        # Each value is a "${...}" string — extract the body
+        # Each value is a "${...}" string -- extract the body
         if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
             body = value[2:-1]
             results.append((key, body))
@@ -493,7 +488,11 @@ def _load_invalid_expressions() -> list[tuple[str, str]]:
 
 
 class TestInvalidExpressionsFixture:
-    """Parametrized tests loading expressions from invalid_expressions.yaml."""
+    """Parametrized tests loading expressions from invalid_expressions.yaml.
+
+    Consolidated: removed tautological test_invalid_expression_has_error_node_or_raises
+    (it only re-asserted len(errors) > 0, same as test_invalid_expression_recovery).
+    """
 
     @pytest.mark.parametrize(
         "label,expr_body",
@@ -519,28 +518,9 @@ class TestInvalidExpressionsFixture:
             node, errors = parse_expression_recover(expr_body)
         except LexError:
             # Lex errors happen before parsing (e.g. unterminated string,
-            # unexpected character) — that's also a valid failure.
+            # unexpected character) -- that's also a valid failure.
             return
         assert len(errors) > 0, f"Expected recovery errors for {label!r}: {expr_body!r}"
-
-    @pytest.mark.parametrize(
-        "label,expr_body",
-        _load_invalid_expressions(),
-        ids=[pair[0] for pair in _load_invalid_expressions()],
-    )
-    def test_invalid_expression_has_error_node_or_raises(self, label, expr_body):
-        """Recovery AST should contain ErrorNode(s), or lex should raise."""
-        try:
-            node, errors = parse_expression_recover(expr_body)
-        except LexError:
-            return  # lex-time failure is acceptable
-        if errors:
-            # At least one ErrorNode should be present in the tree
-            nodes = walk(node)
-            error_nodes = [n for n in nodes if isinstance(n, ErrorNode)]
-            # Note: some errors are reported without ErrorNode (e.g. trailing
-            # junk after a valid expression), so we check errors OR error_nodes
-            assert len(errors) > 0
 
 
 # =============================================================================
