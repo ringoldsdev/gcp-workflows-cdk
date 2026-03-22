@@ -39,19 +39,21 @@ from .steps import (
     StepBase,
     Assign,
     Call,
-    Return_,
+    # Preferred names (no trailing underscores)
     Returns,
     DoReturn,
-    Raise_,
     Raises,
     DoRaise,
-    Switch,
-    For,
     Loop,
-    Parallel,
-    Try_,
     DoTry,
+    Switch,
+    Parallel,
     Steps,
+    # Backward-compat names (trailing underscores)
+    Return_,
+    Raise_,
+    For,
+    Try_,
 )
 from .parser import (
     analyze_yaml,
@@ -96,29 +98,31 @@ __all__ = [
     "Workflow",
     "SimpleWorkflow",
     "SubworkflowsWorkflow",
-    # Builders
+    # Builders (preferred)
     "StepBuilder",
     "Workflow",
     "Subworkflow",
-    "WorkflowBuilder",
     "build",
-    # Step sub-builders
+    # Builder (backward-compat)
+    "WorkflowBuilder",
+    # Step sub-builders (preferred names first)
     "StepBase",
     "Assign",
     "Call",
-    "Return_",
     "Returns",
     "DoReturn",
-    "Raise_",
     "Raises",
     "DoRaise",
     "Switch",
-    "For",
     "Loop",
     "Parallel",
-    "Try_",
     "DoTry",
     "Steps",
+    # Step sub-builders (backward-compat names)
+    "Return_",
+    "Raise_",
+    "For",
+    "Try_",
     # Serialization
     "to_yaml",
     "expr",

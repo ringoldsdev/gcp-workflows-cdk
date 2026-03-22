@@ -504,7 +504,7 @@ class For(StepBase):
 
     Usage::
 
-        For("item").in_(["a", "b"]).steps(step_builder).build()
+        Loop("item").items(["a", "b"]).steps(step_builder).build()
     """
 
     def __init__(self, value: str = "") -> None:
@@ -654,9 +654,9 @@ class Try_(StepBase):
 
     Usage::
 
-        Try_(body_step_builder)
+        DoTry(body_step_builder)
             .retry(predicate=expr("e.code == 429"), max_retries=3, backoff={...})
-            .except_(as_="e", steps=except_step_builder)
+            .exception(error="e", steps=except_step_builder)
             .build()
     """
 
@@ -817,23 +817,23 @@ class Steps(StepBase):
 
 
 # ============================================================================
-# Aliases — friendlier names that avoid trailing underscores
+# Preferred names (aliases that avoid trailing underscores)
 # ============================================================================
 
 Returns = Return_
-"""Alias for :class:`Return_`."""
+"""Preferred name for :class:`Return_`."""
 
 DoReturn = Return_
-"""Alias for :class:`Return_`."""
+"""Alternative name for :class:`Return_`."""
 
 Raises = Raise_
-"""Alias for :class:`Raise_`."""
+"""Preferred name for :class:`Raise_`."""
 
 DoRaise = Raise_
-"""Alias for :class:`Raise_`."""
+"""Alternative name for :class:`Raise_`."""
 
 DoTry = Try_
-"""Alias for :class:`Try_`."""
+"""Preferred name for :class:`Try_`."""
 
 Loop = For
-"""Alias for :class:`For`."""
+"""Preferred name for :class:`For`."""

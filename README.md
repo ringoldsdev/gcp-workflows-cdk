@@ -9,15 +9,13 @@ pip install -e .
 ## Quick Start
 
 ```python
-from cloud_workflows import StepBuilder, WorkflowBuilder, build, expr
+from cloud_workflows import Workflow, build, expr
 
 workflow = (
-    WorkflowBuilder()
-    .steps(lambda s: s
-        .assign("init", x=10, y=20)
-        .call("log", func="sys.log", args={"text": expr("x + y")})
-        .returns("done", value=expr("x + y"))
-    )
+    Workflow()
+    .assign("init", x=10, y=20)
+    .call("log", func="sys.log", args={"text": expr("x + y")})
+    .returns("done", value=expr("x + y"))
     .build()
 )
 
@@ -112,7 +110,7 @@ s.raises("fail", lambda r: r.value(expr("e")))
 # callback — each .condition() adds a branch
 s.switch("check", lambda sw: sw
     .condition(expr("x > 0"), next="positive")
-    .condition(expr("x == 0"), return_="zero")
+    .condition(expr("x == 0"), returns="zero")
     .condition(True, next="negative")  # default case
 )
 ```
@@ -128,7 +126,7 @@ s.loop("count", value="i", range_=[1, 10], steps=inner_steps)
 s.loop("loop", lambda f: f
     .value("item")
     .index("idx")
-    .in_(["a", "b", "c"])
+    .items(["a", "b", "c"])
     .steps(lambda s: s
         .call("log", func="sys.log", args={"text": expr("item")})
     ),
@@ -154,7 +152,7 @@ s.parallel("work", lambda p: p
 ### Try / Except / Retry
 
 ```python
-# callback — .body() wraps the operation, .retry() and .except_() add error handling
+# callback — .body() wraps the operation, .retry() and .exception() add error handling
 s.do_try("safe_call", lambda t: t
     .body(lambda s: s
         .call("fetch", func="http.get", args={"url": "https://example.com"}, result="resp")
@@ -164,7 +162,7 @@ s.do_try("safe_call", lambda t: t
         max_retries=3,
         backoff={"initial_delay": 1, "max_delay": 60, "multiplier": 2},
     )
-    .except_(as_="e", steps=lambda s: s
+    .exception(error="e", steps=lambda s: s
         .call("log", func="sys.log", args={"text": expr("e.message")})
         .raises("rethrow", value=expr("e"))
     )
@@ -196,17 +194,15 @@ def logging_middleware(message):
 def error_handler():
     return StepBuilder().do_try("safe", lambda t: t
         .body(lambda s: s.call("op", func="http.get", args={"url": "https://example.com"}, result="r"))
-        .except_(as_="e", steps=lambda s: s.raises("fail", value=expr("e")))
+        .exception(error="e", steps=lambda s: s.raises("fail", value=expr("e")))
     )
 
 workflow = (
-    WorkflowBuilder()
-    .steps(lambda s: s
-        .assign("init", status="starting")
-        .apply(logging_middleware("Workflow started"))
-        .apply(error_handler())
-        .returns("done", value=expr("r.body"))
-    )
+    Workflow()
+    .assign("init", status="starting")
+    .apply(logging_middleware("Workflow started"))
+    .apply(error_handler())
+    .returns("done", value=expr("r.body"))
     .build()
 )
 ```
@@ -227,7 +223,7 @@ s.assign("init", lambda a: a
 ### Factory Functions
 
 ```python
-from cloud_workflows import StepBuilder, WorkflowBuilder, build, expr
+from cloud_workflows import StepBuilder, Workflow, build, expr
 
 def api_workflow(name, url):
     return (
@@ -238,8 +234,8 @@ def api_workflow(name, url):
     )
 
 workflows = [
-    ("users.yaml", WorkflowBuilder().steps(api_workflow("users", "https://example.com/users")).build()),
-    ("orders.yaml", WorkflowBuilder().steps(api_workflow("orders", "https://example.com/orders")).build()),
+    ("users.yaml", Workflow().apply(api_workflow("users", "https://example.com/users")).build()),
+    ("orders.yaml", Workflow().apply(api_workflow("orders", "https://example.com/orders")).build()),
 ]
 
 build(workflows, output_dir="output/")
@@ -247,25 +243,29 @@ build(workflows, output_dir="output/")
 
 ## Subworkflows
 
-When a workflow needs helper functions or accepts runtime parameters, use `.workflow()` instead of `.steps()`:
+When a workflow needs helper functions or accepts runtime parameters, use `Subworkflow` with a dict:
+
+```python
+from cloud_workflows import Workflow, Subworkflow, build, expr
+
+main = Subworkflow().call("greet", func="make_greeting", args={"person": "Alice"}, result="msg").returns("done", value=expr("msg"))
+helper = Subworkflow(params=["person"]).assign("build", greeting=expr('"Hello, " + person')).returns("done", value=expr("greeting"))
+
+workflow = Workflow({"main": main, "helper": helper}).build()
+```
+
+For simple workflows (no subworkflows, no params), chain steps directly on `Workflow`:
 
 ```python
 workflow = (
-    WorkflowBuilder()
-    .workflow("main", lambda s: s
-        .call("greet", func="make_greeting", args={"person": "Alice"}, result="msg")
-        .returns("done", value=expr("msg"))
-    )
-    .workflow("make_greeting", lambda s: s
-        .assign("build", greeting=expr('"Hello, " + person'))
-        .returns("done", value=expr("greeting")),
-        params=["person"],
-    )
+    Workflow()
+    .assign("init", x=10)
+    .returns("done", value=expr("x"))
     .build()
 )
 ```
 
-`.steps(sb)` is shorthand for `.workflow("main", sb)`. If only one workflow named "main" exists with no params, `build()` returns a `SimpleWorkflow` (flat list). Otherwise it returns a `SubworkflowsWorkflow` (dict of named workflows).
+If only one workflow named "main" exists with no params, `build()` returns a `SimpleWorkflow` (flat list). Otherwise it returns a `SubworkflowsWorkflow` (dict of named workflows).
 
 ## Validation
 
@@ -340,14 +340,14 @@ Pydantic field names use trailing underscores for Python reserved words. Seriali
 | `except_` | `except` |
 | `try_` | `try` |
 
-> **Note:** The builder API provides friendlier aliases so you don't need trailing underscores in most code. See the table below. The original underscore names continue to work.
+> **Note:** The builder API provides friendlier names so you don't need trailing underscores in most code. See the table below. The original underscore names continue to work.
 >
-> | Builder method | Alias(es) | Sub-builder class | Alias(es) |
+> | Preferred method | Original | Sub-builder class | Original |
 > |---|---|---|---|
-> | `.return_(name, ...)` | `.returns()`, `.do_return()` | `Return_` | `Returns`, `DoReturn` |
-> | `.raise_(name, ...)` | `.raises()`, `.do_raise()` | `Raise_` | `Raises`, `DoRaise` |
-> | `.for_(name, ...)` | `.loop()` | `For` | `Loop` |
-> | `.try_(name, ...)` | `.do_try()` | `Try_` | `DoTry` |
+> | `.returns(name, ...)` | `.return_()`, `.do_return()` | `Returns` | `Return_`, `DoReturn` |
+> | `.raises(name, ...)` | `.raise_()`, `.do_raise()` | `Raises` | `Raise_`, `DoRaise` |
+> | `.loop(name, ...)` | `.for_()` | `Loop` | `For` |
+> | `.do_try(name, ...)` | `.try_()` | `DoTry` | `Try_` |
 
 ### Model Construction Examples
 

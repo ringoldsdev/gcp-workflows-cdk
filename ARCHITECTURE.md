@@ -7,7 +7,7 @@ How `cloud-workflows-generator` builds, validates, and serializes Google Cloud W
 The builder constructs Pydantic model instances **eagerly** — validation happens at construction time, not as a separate post-processing step. The final YAML output is a one-way serialization of an already-validated model tree.
 
 ```
-User code (StepBuilder / WorkflowBuilder)
+User code (StepBuilder / Workflow / Subworkflow)
     │
     ▼
 Sub-builder .build()                      ← Pydantic models constructed here
@@ -22,7 +22,7 @@ StepBuilder._append(name, body)           ← Wraps into Step(name, body)
 StepBuilder.build()                       ← Returns List[Step]
     │                                        (fully validated Pydantic models)
     ▼
-WorkflowBuilder.build()                   ← Returns SimpleWorkflow or
+Workflow.build()                          ← Returns SimpleWorkflow or
     │                                        SubworkflowsWorkflow
     ▼
 build([("out.yaml", workflow)])           ← Serializes to YAML files
@@ -85,7 +85,7 @@ With `_state: dict`:
 
 ### `_UNSET` sentinel
 
-The `_UNSET` sentinel is still used in one place: `Switch.condition()` defaults for `return_` and `raise_`. These parameters need to distinguish "not provided" from `None` because `None` could be a valid return/raise value. Everywhere else, absence from the `_state` dict serves this purpose.
+The `_UNSET` sentinel is still used in one place: `Switch.condition()` defaults for `returns` and `raises` (and their deprecated aliases `return_` and `raise_`). These parameters need to distinguish "not provided" from `None` because `None` could be a valid return/raise value. Everywhere else, absence from the `_state` dict serves this purpose.
 
 ## Sub-builder class hierarchy
 
@@ -155,7 +155,7 @@ The builder pipeline and analysis pipeline are independent. Builder construction
 src/cloud_workflows/
     __init__.py       Public API re-exports
     models.py         Pydantic v2 models, serializers, discriminated unions
-    builder.py        StepBuilder, WorkflowBuilder, build()
+    builder.py        StepBuilder, Workflow, Subworkflow, WorkflowBuilder, build()
     steps.py          StepBase + 9 sub-builder classes
     expressions.py    Pratt parser for ${...} expressions
     variables.py      Scope-based variable analysis

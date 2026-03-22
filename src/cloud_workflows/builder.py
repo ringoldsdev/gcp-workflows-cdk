@@ -227,7 +227,7 @@ class StepBuilder:
         return self._append(name, builder.build())
 
     # -----------------------------------------------------------------
-    # return_
+    # returns (primary) / return_ (backward compat)
     # -----------------------------------------------------------------
 
     def return_(
@@ -240,10 +240,12 @@ class StepBuilder:
     ) -> StepBuilder:
         """Add a return step.
 
+        Preferred name: ``.returns()``.
+
         Forms::
 
-            .return_("done", value=expr("x + y"))
-            .return_("done", lambda r: r.value(expr("x + y")))
+            .returns("done", value=expr("x + y"))
+            .returns("done", lambda r: r.value(expr("x + y")))
         """
         builder = Return_()
         if configurator is not None and callable(configurator):
@@ -251,11 +253,13 @@ class StepBuilder:
         elif value is not _MISSING:
             builder.value(value)
         else:
-            raise ValueError("return_ requires 'value' kwarg or a lambda configurator")
+            raise ValueError(
+                "returns() requires 'value' kwarg or a lambda configurator"
+            )
         return self._append(name, builder.build())
 
     # -----------------------------------------------------------------
-    # raise_
+    # raises (primary) / raise_ (backward compat)
     # -----------------------------------------------------------------
 
     def raise_(
@@ -268,10 +272,12 @@ class StepBuilder:
     ) -> StepBuilder:
         """Add a raise step.
 
+        Preferred name: ``.raises()``.
+
         Forms::
 
-            .raise_("err", value="something went wrong")
-            .raise_("err", lambda r: r.value({"code": 404}))
+            .raises("err", value="something went wrong")
+            .raises("err", lambda r: r.value({"code": 404}))
         """
         builder = Raise_()
         if configurator is not None and callable(configurator):
@@ -279,7 +285,7 @@ class StepBuilder:
         elif value is not _MISSING:
             builder.value(value)
         else:
-            raise ValueError("raise_ requires 'value' kwarg or a lambda configurator")
+            raise ValueError("raises() requires 'value' kwarg or a lambda configurator")
         return self._append(name, builder.build())
 
     # -----------------------------------------------------------------
@@ -324,7 +330,7 @@ class StepBuilder:
         return self._append(name, builder.build())
 
     # -----------------------------------------------------------------
-    # for_
+    # loop (primary) / for_ (backward compat)
     # -----------------------------------------------------------------
 
     def for_(
@@ -341,14 +347,14 @@ class StepBuilder:
     ) -> StepBuilder:
         """Add a for-loop step.
 
+        Preferred name: ``.loop()``.
+
         Forms::
 
-            .for_("loop", value="item", in_=["a", "b"],
+            .loop("loop", value="item", in_=["a", "b"],
                   steps=StepBuilder().call("log", func="sys.log"))
-            .for_("loop", value="item", in_=items,
-                  steps=lambda s: s.call("log", func="sys.log"))
-            .for_("loop", lambda f: f
-                .value("item").in_(["a", "b"])
+            .loop("loop", lambda f: f
+                .value("item").items(["a", "b"])
                 .steps(StepBuilder().call("log", func="sys.log")))
         """
         builder = For()
@@ -359,15 +365,15 @@ class StepBuilder:
         elif value is not None:
             builder.value(value)
             if in_ is not None:
-                builder.in_(in_)
+                builder.items(in_)
             if range_ is not None:
-                builder.range_(range_)
+                builder.range(range_)
             if index is not None:
                 builder.index(index)
             if steps is not None:
                 builder.steps(_resolve_steps_input(steps))
         else:
-            raise ValueError("for_ requires kwargs or a lambda configurator")
+            raise ValueError("loop() requires kwargs or a lambda configurator")
         return self._append(name, builder.build())
 
     # -----------------------------------------------------------------
@@ -416,7 +422,7 @@ class StepBuilder:
         return self._append(name, builder.build())
 
     # -----------------------------------------------------------------
-    # try_
+    # do_try (primary) / try_ (backward compat)
     # -----------------------------------------------------------------
 
     def try_(
@@ -431,13 +437,16 @@ class StepBuilder:
     ) -> StepBuilder:
         """Add a try/retry/except step.
 
+        Preferred name: ``.do_try()``.
+
         Forms::
 
-            .try_("t", body=StepBuilder().call("f", func="may_fail"),
-                  retry={"predicate": "http.default_retry", "max_retries": 3})
-            .try_("t", lambda t: t
+            .do_try("t", body=StepBuilder().call("f", func="may_fail"),
+                    retry={"predicate": "http.default_retry", "max_retries": 3})
+            .do_try("t", lambda t: t
                 .body(StepBuilder().call("f", func="may_fail"))
-                .retry(predicate="http.default_retry", max_retries=3))
+                .retry(predicate="http.default_retry", max_retries=3)
+                .exception(error="e", steps=except_builder))
         """
         builder = Try_()
         if configurator is not None and callable(configurator):
@@ -452,9 +461,13 @@ class StepBuilder:
                     builder._state["retry"] = retry  # noqa: SLF001
             if except_ is not None:
                 if isinstance(except_, dict):
-                    builder.except_(**except_)
+                    # Map old-style as_ to new error param
+                    mapped = {}
+                    for k, v in except_.items():
+                        mapped["error" if k == "as_" else k] = v
+                    builder.exception(**mapped)
         else:
-            raise ValueError("try_ requires 'body' kwarg or a lambda configurator")
+            raise ValueError("do_try() requires 'body' kwarg or a lambda configurator")
         return self._append(name, builder.build())
 
     # -----------------------------------------------------------------
@@ -552,20 +565,20 @@ class StepBuilder:
         return list(self._steps)
 
     # -----------------------------------------------------------------
-    # Aliases — friendlier names that avoid trailing underscores
+    # Preferred names (aliases that avoid trailing underscores)
     # -----------------------------------------------------------------
 
-    #: Alias for :meth:`return_`.
+    #: Preferred name for :meth:`return_`.
     returns = return_
-    #: Alias for :meth:`return_`.
+    #: Alternative alias for :meth:`return_`.
     do_return = return_
-    #: Alias for :meth:`raise_`.
+    #: Preferred name for :meth:`raise_`.
     raises = raise_
-    #: Alias for :meth:`raise_`.
+    #: Alternative alias for :meth:`raise_`.
     do_raise = raise_
-    #: Alias for :meth:`for_`.
+    #: Preferred name for :meth:`for_`.
     loop = for_
-    #: Alias for :meth:`try_`.
+    #: Preferred name for :meth:`try_`.
     do_try = try_
 
 
@@ -692,11 +705,14 @@ class Workflow(StepBuilder):
 class WorkflowBuilder:
     """Composes StepBuilder(s) into SimpleWorkflow or SubworkflowsWorkflow.
 
+    .. deprecated::
+        Use :class:`Workflow` and :class:`Subworkflow` instead.
+        ``WorkflowBuilder`` is retained for backward compatibility.
+
     Usage::
 
         # Single main workflow (shorthand):
         w = WorkflowBuilder().steps(sb).build()
-        w = WorkflowBuilder().steps(lambda s: s.assign("init", x=10)).build()
 
         # Multiple workflows / subworkflows:
         w = (WorkflowBuilder()
@@ -796,7 +812,7 @@ def build(
     Each entry in ``workflows`` is a ``(filename, workflow)`` tuple where
     *filename* is a relative path (e.g. ``"my_flow.yaml"``) and *workflow*
     is a ``SimpleWorkflow`` or ``SubworkflowsWorkflow`` instance — typically
-    produced by ``WorkflowBuilder.build()``.
+    produced by ``Workflow.build()``.
 
     Args:
         workflows: List of ``(filename, workflow)`` pairs.
@@ -812,15 +828,14 @@ def build(
 
     Example::
 
-        from cloud_workflows import StepBuilder, WorkflowBuilder, build, expr
+        from cloud_workflows import Workflow, build, expr
 
-        main = (StepBuilder()
+        w = (Workflow()
             .assign("init", x=10, y=20)
-            .returns("done", value=expr("x + y")))
+            .returns("done", value=expr("x + y"))
+            .build())
 
-        build([
-            ("my_workflow.yaml", WorkflowBuilder().steps(main).build()),
-        ])
+        build([("my_workflow.yaml", w)])
     """
     if not workflows:
         raise ValueError("workflows list must not be empty")

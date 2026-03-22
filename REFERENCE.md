@@ -148,27 +148,33 @@ Each sub-builder configures one step type via chaining:
 
 **`Raise_(value=UNSET)`** — `.value(v)`, `.apply(source)`. Aliases: `Raises`, `DoRaise`
 
-**`Switch`** — `.condition(cond, *, next, steps, assign, return_, raise_)`, `.next(target)`, `.apply(source)`
+**`Switch`** — `.condition(cond, *, next, steps, assign, returns, raises)`, `.next(target)`, `.apply(source)`. Deprecated params: `return_`, `raise_`
 
-**`For(value="")`** — `.value(name)`, `.in_(items)`, `.range_(r)`, `.index(name)`, `.steps(sb_or_lambda)`, `.apply(source)`. Alias: `Loop`
+**`For(value="")`** — `.value(name)`, `.items(list)`, `.range(r)`, `.index(name)`, `.steps(sb_or_lambda)`, `.apply(source)`. Alias: `Loop`. Deprecated: `.in_()`, `.range_()`
 
 **`Parallel`** — `.branch(name, sb_or_lambda)`, `.shared(vars)`, `.exception_policy(policy)`, `.concurrency_limit(limit)`, `.apply(source)`
 
-**`Try_(body=None)`** — `.body(sb_or_lambda)`, `.retry(*, predicate, max_retries, backoff)`, `.except_(*, as_, steps)`, `.apply(source)`. Alias: `DoTry`
+**`Try_(body=None)`** — `.body(sb_or_lambda)`, `.retry(*, predicate, max_retries, backoff)`, `.exception(*, error, steps)`, `.apply(source)`. Alias: `DoTry`. Deprecated: `.except_(as_=, steps=)`
 
 **`Steps(body=None)`** — `.body(sb_or_lambda)`, `.next(target)`, `.apply(source)`
 
 Every sub-builder has a `.build()` method that returns the corresponding Pydantic model (e.g. `Assign.build()` returns `AssignStep`).
 
-### WorkflowBuilder
+### Workflow / Subworkflow
 
-`WorkflowBuilder` composes one or more named workflows into a `SimpleWorkflow` or `SubworkflowsWorkflow`.
+`Workflow` extends `StepBuilder` for building workflows. For simple workflows, chain steps directly. For multi-workflow definitions, pass a `dict[str, Subworkflow]` to the constructor.
 
-| Method | Description |
+`Subworkflow` extends `StepBuilder` and accepts an optional `params` list.
+
+| Class | Description |
 |---|---|
-| `.workflow(name, steps, *, params)` | Add a named workflow. `steps` is a `StepBuilder` or `Callable[[StepBuilder], StepBuilder]` |
-| `.steps(steps)` | Shorthand for `.workflow("main", steps)` |
-| `.build()` | Returns `SimpleWorkflow` if single "main" with no params, otherwise `SubworkflowsWorkflow` |
+| `Workflow()` | Simple mode — chain steps directly, then `.build()` returns `SimpleWorkflow` |
+| `Workflow({"main": sub, "helper": sub})` | Multi-workflow mode — pass named `Subworkflow` instances, `.build()` returns `SubworkflowsWorkflow` |
+| `Subworkflow(params=[...])` | A named workflow with optional parameters |
+
+#### Legacy: WorkflowBuilder
+
+`WorkflowBuilder` is kept for backward compatibility. It provides `.workflow(name, steps, *, params)` and `.steps(steps)` methods. New code should use `Workflow`/`Subworkflow` instead.
 
 ### `build()` Function
 
@@ -249,18 +255,23 @@ Python reserved words use trailing underscores as field names. Pydantic aliases 
 
 ### Builder Aliases
 
-The builder API provides friendlier names that avoid trailing underscores. These are pure aliases — the original names continue to work.
+The builder API provides friendlier names that avoid trailing underscores. These are the preferred names — the original underscore names continue to work.
 
-| Original | Alias(es) | Notes |
+| Preferred | Original | Notes |
 |---|---|---|
-| `StepBuilder.return_()` | `.returns()`, `.do_return()` | |
-| `StepBuilder.raise_()` | `.raises()`, `.do_raise()` | |
-| `StepBuilder.for_()` | `.loop()` | |
-| `StepBuilder.try_()` | `.do_try()` | |
-| `Return_` class | `Returns`, `DoReturn` | Same class object |
-| `Raise_` class | `Raises`, `DoRaise` | Same class object |
-| `For` class | `Loop` | Same class object |
-| `Try_` class | `DoTry` | Same class object |
+| `StepBuilder.returns()` | `.return_()`, `.do_return()` | |
+| `StepBuilder.raises()` | `.raise_()`, `.do_raise()` | |
+| `StepBuilder.loop()` | `.for_()` | |
+| `StepBuilder.do_try()` | `.try_()` | |
+| `Returns` class | `Return_`, `DoReturn` | Same class object |
+| `Raises` class | `Raise_`, `DoRaise` | Same class object |
+| `Loop` class | `For` | Same class object |
+| `DoTry` class | `Try_` | Same class object |
+| `For.items()` | `.in_()` | |
+| `For.range()` | `.range_()` | |
+| `Try_.exception(error=)` | `.except_(as_=)` | |
+| `Switch.condition(returns=, raises=)` | `(return_=, raise_=)` | |
+| `Workflow` / `Subworkflow` | `WorkflowBuilder` | |
 
 ---
 
@@ -277,7 +288,7 @@ src/cloud_workflows/
     expressions.py    Pratt parser for ${...} expressions
     variables.py      Scope-based variable tracking
     parser.py         Analysis pipeline (analyze_yaml, analyze_workflow)
-    builder.py        StepBuilder + WorkflowBuilder
+    builder.py        StepBuilder, Workflow, Subworkflow, WorkflowBuilder, build()
     steps.py          StepBase + sub-builder classes (Assign, Call, Switch, etc.)
 ```
 
@@ -521,4 +532,4 @@ cloud-workflows-generator/
 PYTHONPATH=src python -m pytest tests/ -v
 ```
 
-428 tests: 263 validation (structural + expression + variable), 165 builder (step builder + workflow builder + CDK + build).
+431 tests: 263 validation (structural + expression + variable), 168 builder (step builder + workflow builder + CDK + build).
