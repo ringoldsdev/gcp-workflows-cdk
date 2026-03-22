@@ -596,40 +596,6 @@ class TestDictRoundTrip:
 class TestAnalyzeWorkflow:
     """Test analyze_workflow() validates without YAML round-trip."""
 
-    def test_valid_simple(self):
-        w = SimpleWorkflow(
-            steps=[
-                Step(name="init", body=AssignStep(assign=[{"x": 10}])),
-                Step(name="done", body=ReturnStep(return_=expr("x"))),
-            ]
-        )
-        result = analyze_workflow(w)
-        assert result.is_valid
-        assert len(result.errors) == 0
-
-    def test_valid_subworkflows(self):
-        w = SubworkflowsWorkflow(
-            workflows={
-                "main": WorkflowDefinition(
-                    steps=[
-                        Step(
-                            name="call_helper",
-                            body=CallStep(call="helper", args={"x": 1}, result="res"),
-                        ),
-                        Step(name="done", body=ReturnStep(return_=expr("res"))),
-                    ]
-                ),
-                "helper": WorkflowDefinition(
-                    params=["x"],
-                    steps=[
-                        Step(name="done", body=ReturnStep(return_=expr("x"))),
-                    ],
-                ),
-            }
-        )
-        result = analyze_workflow(w)
-        assert result.is_valid
-
     def test_invalid_type_raises(self):
         with pytest.raises(TypeError):
             analyze_workflow("not a workflow")

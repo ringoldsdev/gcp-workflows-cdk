@@ -1025,6 +1025,23 @@ class TestMixedConstruction:
         assert d[1] == {"s2": {"call": "sys.log", "args": {"text": "${x}"}}}
         assert d[2] == {"s3": {"return": "${x}"}}
 
+    def test_expr_in_dict(self):
+        """expr() helper works when passed inside raw dict bodies."""
+        w = (
+            WorkflowBuilder()
+            .workflow(
+                "main",
+                StepBuilder()
+                .raw("init", {"assign": [{"x": 1}]})
+                .raw("done", {"return": expr("x + 1")}),
+            )
+            .build()
+        )
+        assert w.to_dict() == [
+            {"init": {"assign": [{"x": 1}]}},
+            {"done": {"return": "${x + 1}"}},
+        ]
+
 
 class TestStepBuilderBuild:
     """Test StepBuilder.build() returns a list of Step objects."""
@@ -1112,6 +1129,11 @@ class TestStepBuilderErrors:
         """Raise with no value kwarg and no lambda should raise."""
         with pytest.raises(ValueError):
             StepBuilder().raise_("bad")
+
+    def test_pydantic_validation_in_builder(self):
+        """Pydantic validation runs eagerly at model construction time."""
+        with pytest.raises(Exception):
+            StepBuilder().raw("bad", AssignStep(assign=[]))
 
 
 class TestSubBuilderTypeErrors:

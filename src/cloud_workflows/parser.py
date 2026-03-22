@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import List, Union
 
 import yaml
@@ -11,17 +10,6 @@ import yaml
 from .expressions import ExpressionError, validate_all_expressions
 from .models import SimpleWorkflow, SubworkflowsWorkflow, Workflow, parse_workflow
 from .variables import Severity, VariableIssue, analyze_variables
-
-
-def validate_yaml(yaml_str: str) -> Workflow:
-    """Parse and validate a Cloud Workflows YAML string."""
-    return parse_workflow(yaml_str)
-
-
-def validate_file(path: Union[str, Path]) -> Workflow:
-    """Parse and validate a Cloud Workflows YAML file."""
-    with open(path, "r", encoding="utf-8") as f:
-        return parse_workflow(f.read())
 
 
 @dataclass
@@ -77,27 +65,18 @@ def analyze_yaml(yaml_str: str) -> AnalysisResult:
     )
 
 
-def analyze_file(path: Union[str, Path]) -> AnalysisResult:
-    """Full analysis pipeline for a YAML file."""
-    with open(path, "r", encoding="utf-8") as f:
-        return analyze_yaml(f.read())
-
-
 def analyze_workflow(workflow: Workflow) -> AnalysisResult:
     """Full analysis pipeline for a programmatically constructed Workflow.
 
     Validates expressions on the serialized dict and variable references
     on the Pydantic models, without round-tripping through a YAML string.
     """
-    if isinstance(workflow, SimpleWorkflow):
-        raw = workflow.to_dict()
-    elif isinstance(workflow, SubworkflowsWorkflow):
-        raw = workflow.to_dict()
-    else:
+    if not isinstance(workflow, (SimpleWorkflow, SubworkflowsWorkflow)):
         raise TypeError(
             f"Expected SimpleWorkflow or SubworkflowsWorkflow, got {type(workflow)}"
         )
 
+    raw = workflow.to_dict()
     expr_errors = validate_all_expressions(raw)
     var_issues = analyze_variables(workflow)
 

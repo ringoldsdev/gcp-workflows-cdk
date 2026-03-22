@@ -165,23 +165,19 @@ class StepBuilder:
             .assign("init", lambda a: a.set("x", 10).set("y", 20))
         """
         builder = Assign()
+        next_target = kwargs.pop("next", None)
         if configurator is not None and callable(configurator):
             configurator(builder)
-            if "next" in kwargs:
-                builder.next(kwargs["next"])
         elif kwargs:
             if "items" in kwargs:
                 builder.items(kwargs["items"])
-                if "next" in kwargs:
-                    builder.next(kwargs["next"])
             else:
                 for k, v in kwargs.items():
-                    if k == "next":
-                        builder.next(v)
-                    else:
-                        builder.set(k, v)
+                    builder.set(k, v)
         else:
             raise ValueError("assign requires kwargs or a lambda configurator")
+        if next_target is not None:
+            builder.next(next_target)
         return self._append(name, builder.build())
 
     # -----------------------------------------------------------------
@@ -444,7 +440,8 @@ class StepBuilder:
                 if isinstance(retry, dict):
                     builder.retry(**retry)
                 else:
-                    builder._retry = retry
+                    # RetryConfig or string predicate — store directly
+                    builder._retry = retry  # noqa: SLF001
             if except_ is not None:
                 if isinstance(except_, dict):
                     builder.except_(**except_)
@@ -547,8 +544,6 @@ class StepBuilder:
         return list(self._steps)
 
 
-# =============================================================================
-# WorkflowBuilder
 # =============================================================================
 # WorkflowBuilder
 # =============================================================================

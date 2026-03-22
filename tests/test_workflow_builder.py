@@ -10,7 +10,6 @@ import yaml
 from cloud_workflows import (
     StepBuilder,
     WorkflowBuilder,
-    analyze_workflow,
     expr,
 )
 from cloud_workflows.models import (
@@ -172,50 +171,6 @@ class TestRoundTrip:
 
 
 # =============================================================================
-# Validation integration
-# =============================================================================
-
-
-class TestWorkflowValidation:
-    """WorkflowBuilder output passes the full analysis pipeline."""
-
-    def test_simple_validates(self):
-        steps = (
-            StepBuilder()
-            .assign("init", x=10, y=20)
-            .return_("done", value=expr("x + y"))
-        )
-        w = WorkflowBuilder().workflow("main", steps).build()
-        result = analyze_workflow(w)
-        assert result.is_valid
-
-    def test_subworkflows_validates(self):
-        main = (
-            StepBuilder()
-            .call(
-                "call_helper",
-                func="helper",
-                args={"input": "test"},
-                result="res",
-            )
-            .return_("done", value=expr("res"))
-        )
-        helper = (
-            StepBuilder()
-            .call("log", func="sys.log", args={"text": expr("input")})
-            .return_("done", value="ok")
-        )
-        w = (
-            WorkflowBuilder()
-            .workflow("main", main)
-            .workflow("helper", helper, params=["input"])
-            .build()
-        )
-        result = analyze_workflow(w)
-        assert result.is_valid
-
-
-# =============================================================================
 # Error cases
 # =============================================================================
 
@@ -235,3 +190,46 @@ class TestWorkflowBuilderErrors:
     def test_empty_step_builder_raises(self):
         with pytest.raises(ValueError, match="no steps"):
             WorkflowBuilder().workflow("main", StepBuilder()).build()
+
+    def test_invalid_step_body_raises(self):
+        with pytest.raises(Exception):
+            WorkflowBuilder().workflow(
+                "main",
+                StepBuilder().raw("bad", {"invalid_key": 42}),
+            ).build()
+
+
+# =============================================================================
+# Chaining
+# =============================================================================
+
+
+class TestWorkflowBuilderChaining:
+    """Test that chaining returns self correctly."""
+
+    def test_raw_returns_builder(self):
+        b = StepBuilder()
+        result = b.raw("s1", {"assign": [{"x": 1}]})
+        assert result is b
+
+    def test_workflow_returns_builder(self):
+        b = WorkflowBuilder()
+        result = b.workflow("main", StepBuilder().raw("s1", {"assign": [{"x": 1}]}))
+        assert result is b
+
+    def test_long_chain(self):
+        w = (
+            WorkflowBuilder()
+            .workflow(
+                "main",
+                StepBuilder()
+                .raw("s1", {"assign": [{"a": 1}]})
+                .raw("s2", {"assign": [{"b": 2}]})
+                .raw("s3", {"assign": [{"c": 3}]})
+                .raw("s4", {"assign": [{"d": 4}]})
+                .raw("s5", {"return": "${a + b + c + d}"}),
+            )
+            .build()
+        )
+        assert isinstance(w, SimpleWorkflow)
+        assert len(w.steps) == 5

@@ -45,10 +45,7 @@ from .steps import (
     Steps,
 )
 from .parser import (
-    validate_yaml,
-    validate_file,
     analyze_yaml,
-    analyze_file,
     analyze_workflow,
     AnalysisResult,
 )
@@ -68,8 +65,6 @@ from .variables import (
 __all__ = [
     # Parsing
     "parse_workflow",
-    "validate_yaml",
-    "validate_file",
     "Workflow",
     "SimpleWorkflow",
     "SubworkflowsWorkflow",
@@ -92,7 +87,6 @@ __all__ = [
     "expr",
     # Full analysis pipeline
     "analyze_yaml",
-    "analyze_file",
     "analyze_workflow",
     "AnalysisResult",
     # Expression validation

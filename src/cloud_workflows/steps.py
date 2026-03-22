@@ -19,7 +19,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Type, TypeVar, Union
 
 from .models import (
     AssignStep,
@@ -56,6 +56,51 @@ __all__ = [
 
 # Sentinel for "not yet set" (distinct from None which may be a valid value)
 _UNSET = object()
+
+_T = TypeVar("_T")
+
+
+def _resolve_source(
+    source: Any, expected_type: Type[_T], type_name: str
+) -> Optional[_T]:
+    """Resolve an apply() source to the expected type.
+
+    Handles callables that return the expected type or None.
+
+    Returns:
+        The resolved instance, or None if a callable returned None.
+
+    Raises:
+        TypeError: If source is not the expected type.
+    """
+    if callable(source) and not isinstance(source, expected_type):
+        result = source()
+        if result is None:
+            return None
+        source = result
+    if not isinstance(source, expected_type):
+        raise TypeError(
+            f"{type_name}.apply() requires a {type_name} instance, "
+            f"got {type(source).__name__}"
+        )
+    return source
+
+
+def _resolve_step_builder(sb: Any) -> List[Dict[str, Any]]:
+    """Convert a StepBuilder (or raw list) into a list of step dicts.
+
+    If ``sb`` is a StepBuilder, calls ``.build()`` and serializes each step
+    via ``model_dump(by_alias=True, exclude_none=True)``.  Otherwise returns
+    ``sb`` unchanged (assumed to already be a list of dicts).
+    """
+    from .builder import StepBuilder
+
+    if isinstance(sb, StepBuilder):
+        return [
+            {s.name: s.body.model_dump(by_alias=True, exclude_none=True)}
+            for s in sb.build()
+        ]
+    return sb
 
 
 # =============================================================================
@@ -102,18 +147,12 @@ class Assign:
         Raises:
             TypeError: If source is not an Assign or callable returning Assign/None.
         """
-        if callable(source) and not isinstance(source, Assign):
-            result = source()
-            if result is None:
-                return self
-            source = result
-        if not isinstance(source, Assign):
-            raise TypeError(
-                f"Assign.apply() requires an Assign instance, got {type(source).__name__}"
-            )
-        self._items.extend(source._items)
-        if source._next is not None:
-            self._next = source._next
+        resolved = _resolve_source(source, Assign, "Assign")
+        if resolved is None:
+            return self
+        self._items.extend(resolved._items)
+        if resolved._next is not None:
+            self._next = resolved._next
         return self
 
     def build(self) -> AssignStep:
@@ -167,23 +206,17 @@ class Call:
 
         Overwrites only fields that the source has explicitly set.
         """
-        if callable(source) and not isinstance(source, Call):
-            result = source()
-            if result is None:
-                return self
-            source = result
-        if not isinstance(source, Call):
-            raise TypeError(
-                f"Call.apply() requires a Call instance, got {type(source).__name__}"
-            )
-        if source._func:
-            self._func = source._func
-        if source._args is not _UNSET:
-            self._args = source._args
-        if source._result is not _UNSET:
-            self._result = source._result
-        if source._next is not None:
-            self._next = source._next
+        resolved = _resolve_source(source, Call, "Call")
+        if resolved is None:
+            return self
+        if resolved._func:
+            self._func = resolved._func
+        if resolved._args is not _UNSET:
+            self._args = resolved._args
+        if resolved._result is not _UNSET:
+            self._result = resolved._result
+        if resolved._next is not None:
+            self._next = resolved._next
         return self
 
     def build(self) -> CallStep:
@@ -224,17 +257,11 @@ class Return_:
 
     def apply(self, source: Union[Return_, Callable[[], Optional[Return_]]]) -> Return_:
         """Merge another Return_ builder — overwrites value."""
-        if callable(source) and not isinstance(source, Return_):
-            result = source()
-            if result is None:
-                return self
-            source = result
-        if not isinstance(source, Return_):
-            raise TypeError(
-                f"Return_.apply() requires a Return_ instance, got {type(source).__name__}"
-            )
-        if source._value is not _UNSET:
-            self._value = source._value
+        resolved = _resolve_source(source, Return_, "Return_")
+        if resolved is None:
+            return self
+        if resolved._value is not _UNSET:
+            self._value = resolved._value
         return self
 
     def build(self) -> ReturnStep:
@@ -270,17 +297,11 @@ class Raise_:
 
     def apply(self, source: Union[Raise_, Callable[[], Optional[Raise_]]]) -> Raise_:
         """Merge another Raise_ builder — overwrites value."""
-        if callable(source) and not isinstance(source, Raise_):
-            result = source()
-            if result is None:
-                return self
-            source = result
-        if not isinstance(source, Raise_):
-            raise TypeError(
-                f"Raise_.apply() requires a Raise_ instance, got {type(source).__name__}"
-            )
-        if source._value is not _UNSET:
-            self._value = source._value
+        resolved = _resolve_source(source, Raise_, "Raise_")
+        if resolved is None:
+            return self
+        if resolved._value is not _UNSET:
+            self._value = resolved._value
         return self
 
     def build(self) -> RaiseStep:
@@ -348,18 +369,12 @@ class Switch:
         - Conditions are appended (additive).
         - 'next' is overwritten if the source has it set.
         """
-        if callable(source) and not isinstance(source, Switch):
-            result = source()
-            if result is None:
-                return self
-            source = result
-        if not isinstance(source, Switch):
-            raise TypeError(
-                f"Switch.apply() requires a Switch instance, got {type(source).__name__}"
-            )
-        self._conditions.extend(source._conditions)
-        if source._next is not None:
-            self._next = source._next
+        resolved = _resolve_source(source, Switch, "Switch")
+        if resolved is None:
+            return self
+        self._conditions.extend(resolved._conditions)
+        if resolved._next is not None:
+            self._next = resolved._next
         return self
 
     def build(self) -> SwitchStep:
@@ -375,10 +390,7 @@ class Switch:
 
                 if isinstance(raw_steps, StepBuilder):
                     entry = dict(entry)
-                    entry["steps"] = [
-                        {s.name: s.body.model_dump(by_alias=True, exclude_none=True)}
-                        for s in raw_steps.build()
-                    ]
+                    entry["steps"] = _resolve_step_builder(raw_steps)
             conditions.append(SwitchCondition(**entry))
         return SwitchStep(switch=conditions, next=self._next)
 
@@ -430,25 +442,19 @@ class For:
 
     def apply(self, source: Union[For, Callable[[], Optional[For]]]) -> For:
         """Merge another For builder — overwrites set fields, replaces steps."""
-        if callable(source) and not isinstance(source, For):
-            result = source()
-            if result is None:
-                return self
-            source = result
-        if not isinstance(source, For):
-            raise TypeError(
-                f"For.apply() requires a For instance, got {type(source).__name__}"
-            )
-        if source._value:
-            self._value = source._value
-        if source._in is not _UNSET:
-            self._in = source._in
-        if source._range is not _UNSET:
-            self._range = source._range
-        if source._index is not None:
-            self._index = source._index
-        if source._steps is not None:
-            self._steps = source._steps
+        resolved = _resolve_source(source, For, "For")
+        if resolved is None:
+            return self
+        if resolved._value:
+            self._value = resolved._value
+        if resolved._in is not _UNSET:
+            self._in = resolved._in
+        if resolved._range is not _UNSET:
+            self._range = resolved._range
+        if resolved._index is not None:
+            self._index = resolved._index
+        if resolved._steps is not None:
+            self._steps = resolved._steps
         return self
 
     def build(self) -> ForStep:
@@ -460,16 +466,7 @@ class For:
         if self._steps is None:
             raise ValueError("For builder has no steps — call .steps()")
 
-        # Resolve StepBuilder to list of step dicts
-        from .builder import StepBuilder
-
-        if isinstance(self._steps, StepBuilder):
-            step_dicts = [
-                {s.name: s.body.model_dump(by_alias=True, exclude_none=True)}
-                for s in self._steps.build()
-            ]
-        else:
-            step_dicts = self._steps
+        step_dicts = _resolve_step_builder(self._steps)
 
         return ForStep(
             for_=ForBody(
@@ -531,22 +528,16 @@ class Parallel:
         - Branches are appended (additive).
         - shared/exception_policy/concurrency_limit are overwritten if set.
         """
-        if callable(source) and not isinstance(source, Parallel):
-            result = source()
-            if result is None:
-                return self
-            source = result
-        if not isinstance(source, Parallel):
-            raise TypeError(
-                f"Parallel.apply() requires a Parallel instance, got {type(source).__name__}"
-            )
-        self._branches.extend(source._branches)
-        if source._shared is not None:
-            self._shared = source._shared
-        if source._exception_policy is not None:
-            self._exception_policy = source._exception_policy
-        if source._concurrency_limit is not None:
-            self._concurrency_limit = source._concurrency_limit
+        resolved = _resolve_source(source, Parallel, "Parallel")
+        if resolved is None:
+            return self
+        self._branches.extend(resolved._branches)
+        if resolved._shared is not None:
+            self._shared = resolved._shared
+        if resolved._exception_policy is not None:
+            self._exception_policy = resolved._exception_policy
+        if resolved._concurrency_limit is not None:
+            self._concurrency_limit = resolved._concurrency_limit
         return self
 
     def build(self) -> ParallelStep:
@@ -554,17 +545,9 @@ class Parallel:
         if not self._branches:
             raise ValueError("Parallel builder has no branches — call .branch()")
 
-        from .builder import StepBuilder
-
         branches = []
         for name, steps in self._branches:
-            if isinstance(steps, StepBuilder):
-                step_dicts = [
-                    {s.name: s.body.model_dump(by_alias=True, exclude_none=True)}
-                    for s in steps.build()
-                ]
-            else:
-                step_dicts = steps
+            step_dicts = _resolve_step_builder(steps)
             branches.append(Branch(name=name, steps=step_dicts))
 
         return ParallelStep(
@@ -626,23 +609,17 @@ class Try_:
 
     def apply(self, source: Union[Try_, Callable[[], Optional[Try_]]]) -> Try_:
         """Merge another Try_ builder — overwrites body/retry/except."""
-        if callable(source) and not isinstance(source, Try_):
-            result = source()
-            if result is None:
-                return self
-            source = result
-        if not isinstance(source, Try_):
-            raise TypeError(
-                f"Try_.apply() requires a Try_ instance, got {type(source).__name__}"
-            )
-        if source._body is not None:
-            self._body = source._body
-        if source._retry is not _UNSET:
-            self._retry = source._retry
-        if source._except_as is not None:
-            self._except_as = source._except_as
-        if source._except_steps is not None:
-            self._except_steps = source._except_steps
+        resolved = _resolve_source(source, Try_, "Try_")
+        if resolved is None:
+            return self
+        if resolved._body is not None:
+            self._body = resolved._body
+        if resolved._retry is not _UNSET:
+            self._retry = resolved._retry
+        if resolved._except_as is not None:
+            self._except_as = resolved._except_as
+        if resolved._except_steps is not None:
+            self._except_steps = resolved._except_steps
         return self
 
     def build(self) -> TryStep:
@@ -667,17 +644,9 @@ class Try_:
                         result=body_model.result,
                     )
                 else:
-                    step_dicts = [
-                        {s.name: s.body.model_dump(by_alias=True, exclude_none=True)}
-                        for s in body_steps
-                    ]
-                    try_body = TryStepsBody(steps=step_dicts)
+                    try_body = TryStepsBody(steps=_resolve_step_builder(self._body))
             else:
-                step_dicts = [
-                    {s.name: s.body.model_dump(by_alias=True, exclude_none=True)}
-                    for s in body_steps
-                ]
-                try_body = TryStepsBody(steps=step_dicts)
+                try_body = TryStepsBody(steps=_resolve_step_builder(self._body))
         else:
             try_body = self._body
 
@@ -703,13 +672,7 @@ class Try_:
         # Resolve except
         except_body = None
         if self._except_as is not None and self._except_steps is not None:
-            if isinstance(self._except_steps, StepBuilder):
-                except_step_dicts = [
-                    {s.name: s.body.model_dump(by_alias=True, exclude_none=True)}
-                    for s in self._except_steps.build()
-                ]
-            else:
-                except_step_dicts = self._except_steps
+            except_step_dicts = _resolve_step_builder(self._except_steps)
             except_body = ExceptBody(as_=self._except_as, steps=except_step_dicts)
 
         return TryStep(
@@ -747,19 +710,13 @@ class Steps:
 
     def apply(self, source: Union[Steps, Callable[[], Optional[Steps]]]) -> Steps:
         """Merge another Steps builder — replaces body, overwrites next."""
-        if callable(source) and not isinstance(source, Steps):
-            result = source()
-            if result is None:
-                return self
-            source = result
-        if not isinstance(source, Steps):
-            raise TypeError(
-                f"Steps.apply() requires a Steps instance, got {type(source).__name__}"
-            )
-        if source._body is not None:
-            self._body = source._body
-        if source._next is not None:
-            self._next = source._next
+        resolved = _resolve_source(source, Steps, "Steps")
+        if resolved is None:
+            return self
+        if resolved._body is not None:
+            self._body = resolved._body
+        if resolved._next is not None:
+            self._next = resolved._next
         return self
 
     def build(self) -> NestedStepsStep:
@@ -769,14 +726,6 @@ class Steps:
                 "Steps builder has no body — call .body() or pass it to constructor"
             )
 
-        from .builder import StepBuilder
-
-        if isinstance(self._body, StepBuilder):
-            step_dicts = [
-                {s.name: s.body.model_dump(by_alias=True, exclude_none=True)}
-                for s in self._body.build()
-            ]
-        else:
-            step_dicts = self._body
+        step_dicts = _resolve_step_builder(self._body)
 
         return NestedStepsStep(steps=step_dicts, next=self._next)
