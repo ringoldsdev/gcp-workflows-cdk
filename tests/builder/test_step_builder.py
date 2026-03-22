@@ -13,19 +13,20 @@ import yaml
 
 from cloud_workflows import (
     StepBuilder,
-    WorkflowBuilder,
+    Workflow,
+    Subworkflow,
     analyze_workflow,
     expr,
 )
 from cloud_workflows.steps import (
     Assign,
     Call,
-    Return_,
-    Raise_,
+    Returns,
+    Raises,
     Switch,
-    For,
+    Loop,
     Parallel,
-    Try_,
+    DoTry,
     Steps,
 )
 from cloud_workflows.models import (
@@ -58,7 +59,7 @@ from conftest import load_fixture
 
 def _to_dict(sb: StepBuilder) -> list:
     """Build steps into a SimpleWorkflow and serialize to dict."""
-    w = WorkflowBuilder().workflow("main", sb).build()
+    w = Workflow().apply(sb).build()
     assert isinstance(w, SimpleWorkflow)
     return w.to_dict()
 
@@ -143,7 +144,7 @@ class TestAssign:
         sb = (
             StepBuilder()
             .assign("init", x=10, y=20)
-            .return_("done", value=expr("x + y"))
+            .returns("done", value=expr("x + y"))
         )
         expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
         assert _to_dict(sb) == expected
@@ -254,22 +255,22 @@ class TestReturn:
     """Return step: kwargs, lambda, sub-builder, and model passthrough."""
 
     def test_return_value(self):
-        sb = StepBuilder().return_("done", value="ok")
+        sb = StepBuilder().returns("done", value="ok")
         d = _to_dict(sb)
         assert d == [{"done": {"return": "ok"}}]
 
     def test_return_expr(self):
-        sb = StepBuilder().return_("done", value=expr("x + y"))
+        sb = StepBuilder().returns("done", value=expr("x + y"))
         d = _to_dict(sb)
         assert d == [{"done": {"return": "${x + y}"}}]
 
     def test_lambda_return(self):
-        sb = StepBuilder().return_("done", lambda r: r.value("ok"))
+        sb = StepBuilder().returns("done", lambda r: r.value("ok"))
         d = _to_dict(sb)
         assert d == [{"done": {"return": "ok"}}]
 
     def test_direct_sub_builder(self):
-        sb = StepBuilder().raw("done", Return_(expr("x + y")))
+        sb = StepBuilder().raw("done", Returns(expr("x + y")))
         d = _to_dict(sb)
         assert d == [{"done": {"return": "${x + y}"}}]
 
@@ -288,22 +289,22 @@ class TestRaise:
     """Raise step: kwargs, lambda, and sub-builder."""
 
     def test_raise_string(self):
-        sb = StepBuilder().raise_("fail", value="something went wrong")
+        sb = StepBuilder().raises("fail", value="something went wrong")
         d = _to_dict(sb)
         assert d == [{"fail": {"raise": "something went wrong"}}]
 
     def test_raise_dict(self):
-        sb = StepBuilder().raise_("fail", value={"code": 404, "message": "not found"})
+        sb = StepBuilder().raises("fail", value={"code": 404, "message": "not found"})
         d = _to_dict(sb)
         assert d == [{"fail": {"raise": {"code": 404, "message": "not found"}}}]
 
     def test_lambda_raise(self):
-        sb = StepBuilder().raise_("fail", lambda r: r.value(expr("e")))
+        sb = StepBuilder().raises("fail", lambda r: r.value(expr("e")))
         d = _to_dict(sb)
         assert d == [{"fail": {"raise": "${e}"}}]
 
     def test_direct_sub_builder(self):
-        sb = StepBuilder().raw("fail", Raise_({"code": 404}))
+        sb = StepBuilder().raw("fail", Raises({"code": 404}))
         d = _to_dict(sb)
         assert d == [{"fail": {"raise": {"code": 404}}}]
 
@@ -405,8 +406,8 @@ class TestSwitch:
                     )
                 ),
             )
-            .return_("positive", value="positive")
-            .return_("negative", value="negative")
+            .returns("positive", value="positive")
+            .returns("negative", value="negative")
         )
         expected = yaml.safe_load(load_fixture("cdk", "switch.yaml"))
         assert _to_dict(sb) == expected
@@ -422,7 +423,7 @@ class TestFor:
 
     def test_for_in(self):
         inner = StepBuilder().call("log", func="sys.log", args={"text": expr("item")})
-        sb = StepBuilder().for_(
+        sb = StepBuilder().loop(
             "loop",
             value="item",
             in_=["a", "b", "c"],
@@ -445,9 +446,9 @@ class TestFor:
 
     def test_lambda_for(self):
         inner = StepBuilder().call("log", func="sys.log", args={"text": expr("item")})
-        sb = StepBuilder().for_(
+        sb = StepBuilder().loop(
             "loop",
-            lambda f: f.in_(["a", "b", "c"]).steps(inner),
+            lambda f: f.items(["a", "b", "c"]).steps(inner),
             value="item",
         )
         d = _to_dict(sb)
@@ -469,7 +470,7 @@ class TestFor:
         inner = StepBuilder().call("log", func="sys.log", args={"text": expr("item")})
         sb = StepBuilder().raw(
             "loop",
-            For("item").in_(["a", "b", "c"]).steps(inner),
+            Loop("item").items(["a", "b", "c"]).steps(inner),
         )
         d = _to_dict(sb)
         assert d == [
@@ -490,7 +491,7 @@ class TestFor:
         inner = StepBuilder().call("log", func="sys.log", args={"text": expr("item")})
         sb = StepBuilder().raw(
             "loop",
-            For("item").range_([1, 10, 2]).steps(inner),
+            Loop("item").range([1, 10, 2]).steps(inner),
         )
         d = _to_dict(sb)
         assert d == [
@@ -511,7 +512,7 @@ class TestFor:
         inner = StepBuilder().call("log", func="sys.log", args={"text": expr("item")})
         sb = StepBuilder().raw(
             "loop",
-            For("item").in_(["a", "b"]).index("idx").steps(inner),
+            Loop("item").items(["a", "b"]).index("idx").steps(inner),
         )
         d = _to_dict(sb)
         assert d == [
@@ -531,7 +532,7 @@ class TestFor:
 
     def test_for_loop_fixture(self):
         inner = StepBuilder().call("log", func="sys.log", args={"text": expr("item")})
-        sb = StepBuilder().for_(
+        sb = StepBuilder().loop(
             "loop",
             value="item",
             in_=["a", "b", "c"],
@@ -608,8 +609,8 @@ class TestTry:
             args={"url": "https://example.com"},
             result="response",
         )
-        except_steps = StepBuilder().raise_("handle", value=expr("e"))
-        sb = StepBuilder().try_(
+        except_steps = StepBuilder().raises("handle", value=expr("e"))
+        sb = StepBuilder().do_try(
             "try_call",
             body=body,
             retry={
@@ -634,8 +635,8 @@ class TestTry:
             args={"url": "https://example.com"},
             result="response",
         )
-        except_steps = StepBuilder().raise_("handle", value=expr("e"))
-        sb = StepBuilder().try_(
+        except_steps = StepBuilder().raises("handle", value=expr("e"))
+        sb = StepBuilder().do_try(
             "try_call",
             lambda t: (
                 t.body(body)
@@ -644,7 +645,7 @@ class TestTry:
                     max_retries=3,
                     backoff={"initial_delay": 1, "max_delay": 30, "multiplier": 2},
                 )
-                .except_(as_="e", steps=except_steps)
+                .exception(error="e", steps=except_steps)
             ),
         )
         d = _to_dict(sb)
@@ -658,16 +659,16 @@ class TestTry:
             args={"url": "https://example.com"},
             result="response",
         )
-        except_steps = StepBuilder().raise_("handle", value=expr("e"))
+        except_steps = StepBuilder().raises("handle", value=expr("e"))
         sb = StepBuilder().raw(
             "try_call",
-            Try_(body)
+            DoTry(body)
             .retry(
                 predicate=expr("e.code == 429"),
                 max_retries=3,
                 backoff={"initial_delay": 1, "max_delay": 30, "multiplier": 2},
             )
-            .except_(as_="e", steps=except_steps),
+            .exception(error="e", steps=except_steps),
         )
         d = _to_dict(sb)
         expected = yaml.safe_load(load_fixture("cdk", "try_except_retry.yaml"))
@@ -691,7 +692,7 @@ class TestNestedSteps:
         sb = (
             StepBuilder()
             .nested_steps("group", body=inner, next="done")
-            .return_("done", value="ok")
+            .returns("done", value="ok")
         )
         d = _to_dict(sb)
         expected = yaml.safe_load(load_fixture("cdk", "nested_steps.yaml"))
@@ -706,7 +707,7 @@ class TestNestedSteps:
         sb = (
             StepBuilder()
             .nested_steps("group", lambda s: s.body(inner).next("done"))
-            .return_("done", value="ok")
+            .returns("done", value="ok")
         )
         d = _to_dict(sb)
         expected = yaml.safe_load(load_fixture("cdk", "nested_steps.yaml"))
@@ -721,7 +722,7 @@ class TestNestedSteps:
         sb = (
             StepBuilder()
             .raw("group", Steps(inner).next("done"))
-            .return_("done", value="ok")
+            .returns("done", value="ok")
         )
         d = _to_dict(sb)
         expected = yaml.safe_load(load_fixture("cdk", "nested_steps.yaml"))
@@ -819,7 +820,7 @@ class TestApply:
     # -- Try apply --
 
     def test_try_apply_retry_config(self):
-        """Reusable retry config applied to a Try_ builder."""
+        """Reusable retry config applied to a DoTry builder."""
         body = StepBuilder().call("call", func="http.get", args={"url": "..."})
 
         def add_retry(t):
@@ -829,7 +830,7 @@ class TestApply:
                 backoff={"initial_delay": 1, "max_delay": 30, "multiplier": 2},
             )
 
-        sb = StepBuilder().try_(
+        sb = StepBuilder().do_try(
             "safe",
             lambda t: add_retry(t.body(body)),
         )
@@ -865,7 +866,7 @@ class TestStepBuilderApply:
 
     def test_apply_step_builder(self):
         setup = StepBuilder().assign("init", x=0)
-        main = StepBuilder().apply(setup).return_("done", value=expr("x"))
+        main = StepBuilder().apply(setup).returns("done", value=expr("x"))
         d = _to_dict(main)
         assert d == [
             {"init": {"assign": [{"x": 0}]}},
@@ -874,7 +875,7 @@ class TestStepBuilderApply:
 
     def test_apply_callable_returns_builder(self):
         setup = StepBuilder().assign("init", x=0)
-        main = StepBuilder().apply(lambda: setup).return_("done", value=expr("x"))
+        main = StepBuilder().apply(lambda: setup).returns("done", value=expr("x"))
         d = _to_dict(main)
         assert d == [
             {"init": {"assign": [{"x": 0}]}},
@@ -882,7 +883,7 @@ class TestStepBuilderApply:
         ]
 
     def test_apply_callable_returns_none(self):
-        main = StepBuilder().apply(lambda: None).return_("done", value="ok")
+        main = StepBuilder().apply(lambda: None).returns("done", value="ok")
         d = _to_dict(main)
         assert d == [{"done": {"return": "ok"}}]
 
@@ -893,7 +894,7 @@ class TestStepBuilderApply:
             StepBuilder()
             .apply(setup)
             .apply(middle)
-            .return_("done", value=expr("x + y"))
+            .returns("done", value=expr("x + y"))
         )
         d = _to_dict(main)
         assert len(d) == 3
@@ -910,7 +911,7 @@ class TestStepBuilderApply:
             StepBuilder()
             .assign("init", status="starting")
             .apply(logging_steps("workflow started"))
-            .return_("done", value="ok")
+            .returns("done", value="ok")
         )
         d = _to_dict(main)
         assert len(d) == 3
@@ -999,13 +1000,13 @@ class TestDotPathUnnesting:
 class TestLambdaInnerStepBuilder:
     """Sub-builders accept lambdas that receive a StepBuilder for inner steps."""
 
-    # -- For.steps() --
+    # -- Loop.steps() --
 
     def test_for_steps_lambda(self):
-        """For.steps() accepts a lambda that receives a StepBuilder."""
-        sb = StepBuilder().for_(
+        """Loop.steps() accepts a lambda that receives a StepBuilder."""
+        sb = StepBuilder().loop(
             "loop",
-            lambda f: f.in_(["a", "b", "c"]).steps(
+            lambda f: f.items(["a", "b", "c"]).steps(
                 lambda s: s.call("log", func="sys.log", args={"text": expr("item")})
             ),
             value="item",
@@ -1015,11 +1016,11 @@ class TestLambdaInnerStepBuilder:
         assert d == expected
 
     def test_for_direct_sub_builder_lambda(self):
-        """For() sub-builder used via .raw() with lambda steps."""
+        """Loop() sub-builder used via .raw() with lambda steps."""
         sb = StepBuilder().raw(
             "loop",
-            For("item")
-            .in_(["a", "b", "c"])
+            Loop("item")
+            .items(["a", "b", "c"])
             .steps(
                 lambda s: s.call("log", func="sys.log", args={"text": expr("item")})
             ),
@@ -1064,11 +1065,11 @@ class TestLambdaInnerStepBuilder:
         expected = yaml.safe_load(load_fixture("cdk", "parallel_lambda_inner.yaml"))
         assert d == expected
 
-    # -- Try_.body() --
+    # -- DoTry.body() --
 
     def test_try_body_lambda(self):
-        """Try_.body() accepts a lambda that receives a StepBuilder."""
-        sb = StepBuilder().try_(
+        """DoTry.body() accepts a lambda that receives a StepBuilder."""
+        sb = StepBuilder().do_try(
             "try_call",
             lambda t: t.body(
                 lambda s: s.call(
@@ -1079,7 +1080,7 @@ class TestLambdaInnerStepBuilder:
                 )
             ).except_(
                 as_="e",
-                steps=StepBuilder().raise_("handle", value=expr("e")),
+                steps=StepBuilder().raises("handle", value=expr("e")),
             ),
         )
         d = _to_dict(sb)
@@ -1087,40 +1088,40 @@ class TestLambdaInnerStepBuilder:
         assert d == expected
 
     def test_try_direct_sub_builder_lambda_body(self):
-        """Try_() sub-builder used via .raw() with lambda body."""
+        """DoTry() sub-builder used via .raw() with lambda body."""
         sb = StepBuilder().raw(
             "try_call",
-            Try_(
+            DoTry(
                 lambda s: s.call(
                     "call",
                     func="http.get",
                     args={"url": "https://example.com"},
                     result="response",
                 )
-            ).except_(
-                as_="e",
-                steps=StepBuilder().raise_("handle", value=expr("e")),
+            ).exception(
+                error="e",
+                steps=StepBuilder().raises("handle", value=expr("e")),
             ),
         )
         d = _to_dict(sb)
         expected = yaml.safe_load(load_fixture("cdk", "try_lambda_inner.yaml"))
         assert d == expected
 
-    # -- Try_.except_(steps=lambda) --
+    # -- DoTry.exception(steps=lambda) --
 
     def test_try_except_steps_lambda(self):
-        """Try_.except_(steps=lambda) accepts a lambda for the except handler."""
+        """DoTry.exception(steps=lambda) accepts a lambda for the except handler."""
         body = StepBuilder().call(
             "call",
             func="http.get",
             args={"url": "https://example.com"},
             result="response",
         )
-        sb = StepBuilder().try_(
+        sb = StepBuilder().do_try(
             "try_call",
             lambda t: t.body(body).except_(
                 as_="e",
-                steps=lambda s: s.raise_("handle", value=expr("e")),
+                steps=lambda s: s.raises("handle", value=expr("e")),
             ),
         )
         d = _to_dict(sb)
@@ -1141,7 +1142,7 @@ class TestLambdaInnerStepBuilder:
                     ).call("step_b", func="sys.log", args={"text": "b"})
                 ).next("done"),
             )
-            .return_("done", value="ok")
+            .returns("done", value="ok")
         )
         d = _to_dict(sb)
         expected = yaml.safe_load(load_fixture("cdk", "steps_lambda_inner.yaml"))
@@ -1159,7 +1160,7 @@ class TestLambdaInnerStepBuilder:
                     ).call("step_b", func="sys.log", args={"text": "b"})
                 ).next("done"),
             )
-            .return_("done", value="ok")
+            .returns("done", value="ok")
         )
         d = _to_dict(sb)
         expected = yaml.safe_load(load_fixture("cdk", "steps_lambda_inner.yaml"))
@@ -1223,13 +1224,9 @@ class TestMixedConstruction:
     def test_expr_in_dict(self):
         """expr() helper works when passed inside raw dict bodies."""
         w = (
-            WorkflowBuilder()
-            .workflow(
-                "main",
-                StepBuilder()
-                .raw("init", {"assign": [{"x": 1}]})
-                .raw("done", {"return": expr("x + 1")}),
-            )
+            Workflow()
+            .raw("init", {"assign": [{"x": 1}]})
+            .raw("done", {"return": expr("x + 1")})
             .build()
         )
         assert w.to_dict() == [
@@ -1242,7 +1239,7 @@ class TestStepBuilderBuild:
     """Test StepBuilder.build() returns a list of Step objects."""
 
     def test_build_returns_list(self):
-        sb = StepBuilder().assign("s1", x=1).return_("s2", value="ok")
+        sb = StepBuilder().assign("s1", x=1).returns("s2", value="ok")
         steps = sb.build()
         assert isinstance(steps, list)
         assert len(steps) == 2
@@ -1262,37 +1259,32 @@ class TestStepBuilderValidation:
     """Built workflows pass the full validation pipeline."""
 
     def test_simple_assign_validates(self):
-        sb = (
-            StepBuilder()
+        w = (
+            Workflow()
             .assign("init", x=10, y=20)
-            .return_("done", value=expr("x + y"))
+            .returns("done", value=expr("x + y"))
+            .build()
         )
-        w = WorkflowBuilder().workflow("main", sb).build()
         result = analyze_workflow(w)
         assert result.is_valid
 
     def test_subworkflows_validate(self):
         main = (
-            StepBuilder()
+            Subworkflow()
             .call(
                 "call_helper",
                 func="helper",
                 args={"input": "test"},
                 result="res",
             )
-            .return_("done", value=expr("res"))
+            .returns("done", value=expr("res"))
         )
         helper = (
-            StepBuilder()
+            Subworkflow(params=["input"])
             .call("log", func="sys.log", args={"text": expr("input")})
-            .return_("done", value="ok")
+            .returns("done", value="ok")
         )
-        w = (
-            WorkflowBuilder()
-            .workflow("main", main)
-            .workflow("helper", helper, params=["input"])
-            .build()
-        )
+        w = Workflow({"main": main, "helper": helper}).build()
         result = analyze_workflow(w)
         assert result.is_valid
 
@@ -1318,12 +1310,12 @@ class TestStepBuilderErrors:
     def test_return_no_value_raises(self):
         """Return with no value kwarg and no lambda should raise."""
         with pytest.raises(ValueError):
-            StepBuilder().return_("bad")
+            StepBuilder().returns("bad")
 
     def test_raise_no_value_raises(self):
         """Raise with no value kwarg and no lambda should raise."""
         with pytest.raises(ValueError):
-            StepBuilder().raise_("bad")
+            StepBuilder().raises("bad")
 
     def test_pydantic_validation_in_builder(self):
         """Pydantic validation runs eagerly at model construction time."""

@@ -1,23 +1,25 @@
-"""StepBuilder and WorkflowBuilder for constructing Cloud Workflows programmatically.
+"""Builder classes for constructing Cloud Workflows programmatically.
 
-StepBuilder builds a list of steps via per-type method chaining. Each step
-type has its own method that accepts either kwargs or a lambda configurator:
+StepBuilder builds a list of steps via per-type method chaining:
 
     sb = (StepBuilder()
         .assign("init", x=10, y=20)
         .call("fetch", func="http.get", args={"url": url})
         .returns("done", value=expr("x + y")))
 
-WorkflowBuilder composes StepBuilder(s) into SimpleWorkflow or SubworkflowsWorkflow:
+Workflow composes steps into SimpleWorkflow or SubworkflowsWorkflow.
+Workflow extends StepBuilder so you can chain steps directly:
 
-    # Single main workflow (shorthand):
-    w = WorkflowBuilder().steps(sb).build()
-
-    # Multiple workflows:
-    w = (WorkflowBuilder()
-        .workflow("main", sb)
-        .workflow("helper", sb2, params=["n"])
+    # Simple workflow:
+    w = (Workflow()
+        .assign("init", x=10, y=20)
+        .returns("done", value=expr("x + y"))
         .build())
+
+    # Multi-workflow with subworkflows:
+    main = Subworkflow().assign("init", x=10).returns("done", value=expr("x"))
+    helper = Subworkflow(params=["n"]).returns("done", value=expr("n"))
+    w = Workflow({"main": main, "helper": helper}).build()
 
 Write results to disk with build():
 
@@ -91,6 +93,8 @@ _MISSING = object()
 
 __all__ = [
     "StepBuilder",
+    "Workflow",
+    "Subworkflow",
     "WorkflowBuilder",
     "build",
 ]
@@ -566,7 +570,122 @@ class StepBuilder:
 
 
 # =============================================================================
-# WorkflowBuilder
+# Subworkflow — StepBuilder with params
+# =============================================================================
+
+
+class Subworkflow(StepBuilder):
+    """A named workflow definition with optional parameters.
+
+    Extends StepBuilder, so steps can be chained directly::
+
+        helper = (Subworkflow(params=["person"])
+            .assign("build", greeting=expr('"Hello, " + person'))
+            .returns("done", value=expr("greeting")))
+
+    Used as a value in the dict passed to :class:`Workflow`.
+    """
+
+    def __init__(
+        self,
+        *,
+        params: Optional[List[Union[str, Dict[str, Any]]]] = None,
+    ) -> None:
+        super().__init__()
+        self._params = params
+
+
+# =============================================================================
+# Workflow — entry point for building workflows
+# =============================================================================
+
+
+class Workflow(StepBuilder):
+    """Build a Cloud Workflow, either as a simple step chain or multi-workflow.
+
+    **Simple workflow** — chain steps directly::
+
+        w = (Workflow()
+            .assign("init", x=10, y=20)
+            .returns("done", value=expr("x + y"))
+            .build())
+
+    **Multi-workflow** — pass a dict of name -> Subworkflow::
+
+        main = Subworkflow().assign("init", x=10).returns("done", value=expr("x"))
+        helper = Subworkflow(params=["n"]).returns("done", value=expr("n"))
+        w = Workflow({"main": main, "helper": helper}).build()
+
+    ``build()`` returns :class:`SimpleWorkflow` when there is a single "main"
+    with no params, otherwise :class:`SubworkflowsWorkflow`.
+    """
+
+    def __init__(
+        self,
+        workflows: Optional[Dict[str, Subworkflow]] = None,
+    ) -> None:
+        super().__init__()
+        self._workflows: Dict[str, Subworkflow] = dict(workflows) if workflows else {}
+
+    def build(  # type: ignore[override]
+        self,
+    ) -> Union[SimpleWorkflow, SubworkflowsWorkflow]:
+        """Finalize and return the constructed workflow.
+
+        If this Workflow has steps chained on it (and no sub-workflows dict),
+        it builds a SimpleWorkflow from those steps.
+
+        If a sub-workflows dict was provided, it builds from those.
+
+        Returns:
+            SimpleWorkflow or SubworkflowsWorkflow.
+
+        Raises:
+            ValueError: If no steps/workflows were defined.
+        """
+        # Determine sources
+        has_inline_steps = len(self._steps) > 0
+        has_workflows = len(self._workflows) > 0
+
+        if not has_inline_steps and not has_workflows:
+            raise ValueError(
+                "No steps or workflows defined — chain steps or pass "
+                "a dict of Subworkflow instances"
+            )
+
+        if has_inline_steps and has_workflows:
+            raise ValueError(
+                "Cannot both chain steps on Workflow and pass a workflows dict"
+            )
+
+        if has_inline_steps:
+            # Simple mode: this Workflow IS the step chain
+            return SimpleWorkflow(steps=list(self._steps))
+
+        # Multi-workflow mode
+        # Validate all workflows have steps
+        for wf_name, wf in self._workflows.items():
+            if not wf._steps:
+                raise ValueError(f"Workflow '{wf_name}' has no steps")
+
+        # Single 'main' without params -> SimpleWorkflow
+        if len(self._workflows) == 1 and "main" in self._workflows:
+            main_wf = self._workflows["main"]
+            if main_wf._params is None:
+                return SimpleWorkflow(steps=list(main_wf._steps))
+
+        # Everything else -> SubworkflowsWorkflow
+        workflows: Dict[str, WorkflowDefinition] = {}
+        for wf_name, wf in self._workflows.items():
+            workflows[wf_name] = WorkflowDefinition(
+                params=wf._params,
+                steps=list(wf._steps),
+            )
+        return SubworkflowsWorkflow(workflows=workflows)
+
+
+# =============================================================================
+# WorkflowBuilder (backward-compatible, wraps Workflow/Subworkflow)
 # =============================================================================
 
 

@@ -5,7 +5,7 @@ All step types extend ``StepBase``, which provides:
 - ``set(path, value)`` using *jsonpath-ng* for nested-key creation
 - ``apply(source)`` using *deepmerge* for deep-merging another builder's state
 
-Subclasses add typed convenience methods (e.g. ``Call.func()``, ``Loop.in_()``)
+Subclasses add typed convenience methods (e.g. ``Call.func()``, ``Loop.items()``)
 and a ``build()`` method that emits the matching Pydantic model.
 
 Aliases are provided for classes that would otherwise require trailing
@@ -17,7 +17,7 @@ Usage:
     from cloud_workflows.steps import Assign, Call, Returns, Loop, Parallel, DoTry
 
     # Used directly:
-    Assign().set("x", 10).set("y", 20).build()  # → AssignStep
+    Assign().set("x", 10).set("y", 20).build()  # -> AssignStep
 
     # Or via lambda in StepBuilder:
     sb.assign("init", lambda a: a.set("x", 10).set("y", 20))
@@ -435,10 +435,21 @@ class Switch(StepBase):
         next: Optional[str] = None,
         steps: Optional[Any] = None,
         assign: Optional[List[Dict[str, Any]]] = None,
+        returns: Any = _UNSET,
+        raises: Any = _UNSET,
+        # Backward-compat aliases (deprecated):
         return_: Any = _UNSET,
         raise_: Any = _UNSET,
     ) -> Switch:
-        """Add a switch condition."""
+        """Add a switch condition.
+
+        Use ``returns=`` and ``raises=`` for the return/raise actions.
+        The old ``return_=`` and ``raise_=`` still work but are deprecated.
+        """
+        # Resolve aliases: new names take priority
+        effective_return = returns if returns is not _UNSET else return_
+        effective_raise = raises if raises is not _UNSET else raise_
+
         entry: Dict[str, Any] = {"condition": cond}
         if next is not None:
             entry["next"] = next
@@ -446,10 +457,10 @@ class Switch(StepBase):
             entry["steps"] = steps
         if assign is not None:
             entry["assign"] = assign
-        if return_ is not _UNSET:
-            entry["return"] = return_
-        if raise_ is not _UNSET:
-            entry["raise"] = raise_
+        if effective_return is not _UNSET:
+            entry["return"] = effective_return
+        if effective_raise is not _UNSET:
+            entry["raise"] = effective_raise
         self._state["conditions"].append(entry)
         return self
 
@@ -504,12 +515,28 @@ class For(StepBase):
         self._state["value"] = name
         return self
 
-    def in_(self, items: Any) -> For:
+    def in_(self, collection: Any) -> For:
+        """Set the collection to iterate over.
+
+        .. deprecated:: Use :meth:`items` instead.
+        """
+        self._state["in"] = collection
+        return self
+
+    def items(self, collection: Any) -> For:
         """Set the collection to iterate over."""
-        self._state["in"] = items
+        self._state["in"] = collection
         return self
 
     def range_(self, r: Any) -> For:
+        """Set the range to iterate over.
+
+        .. deprecated:: Use :meth:`range` instead.
+        """
+        self._state["range"] = r
+        return self
+
+    def range(self, r: Any) -> For:
         """Set the range to iterate over."""
         self._state["range"] = r
         return self
@@ -659,8 +686,22 @@ class Try_(StepBase):
         return self
 
     def except_(self, *, as_: str, steps: Any) -> Try_:
-        """Set except handler."""
+        """Set except handler.
+
+        .. deprecated:: Use :meth:`exception` instead.
+        """
         self._state["except_as"] = as_
+        self._state["except_steps"] = steps
+        return self
+
+    def exception(self, *, error: str, steps: Any) -> Try_:
+        """Set except handler.
+
+        Args:
+            error: Variable name for the caught exception.
+            steps: Exception handler steps (StepBuilder, callable, or list).
+        """
+        self._state["except_as"] = error
         self._state["except_steps"] = steps
         return self
 

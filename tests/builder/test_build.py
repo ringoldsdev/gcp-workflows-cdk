@@ -13,7 +13,8 @@ from pathlib import Path
 
 from cloud_workflows import (
     StepBuilder,
-    WorkflowBuilder,
+    Workflow,
+    Subworkflow,
     build,
     expr,
 )
@@ -30,12 +31,12 @@ class TestBuildWritesFiles:
     """build() writes YAML files to disk."""
 
     def test_single_workflow(self, tmp_path):
-        steps = (
-            StepBuilder()
+        w = (
+            Workflow()
             .assign("init", x=10, y=20)
-            .return_("done", value=expr("x + y"))
+            .returns("done", value=expr("x + y"))
+            .build()
         )
-        w = WorkflowBuilder().workflow("main", steps).build()
 
         written = build([("simple.yaml", w)], output_dir=tmp_path)
 
@@ -50,29 +51,23 @@ class TestBuildWritesFiles:
 
     def test_multiple_workflows(self, tmp_path):
         main = (
-            StepBuilder()
+            Subworkflow()
             .call(
                 "call_helper",
                 func="helper",
                 args={"input": "test"},
                 result="res",
             )
-            .return_("done", value=expr("res"))
+            .returns("done", value=expr("res"))
         )
         helper = (
-            StepBuilder()
+            Subworkflow(params=["input"])
             .call("log", func="sys.log", args={"text": expr("input")})
-            .return_("done", value="ok")
+            .returns("done", value="ok")
         )
-        multi = (
-            WorkflowBuilder()
-            .workflow("main", main)
-            .workflow("helper", helper, params=["input"])
-            .build()
-        )
+        multi = Workflow({"main": main, "helper": helper}).build()
 
-        second_steps = StepBuilder().return_("done", value="ok")
-        second = WorkflowBuilder().workflow("main", second_steps).build()
+        second = Workflow().returns("done", value="ok").build()
 
         written = build(
             [("multi.yaml", multi), ("second.yaml", second)],
@@ -92,8 +87,7 @@ class TestBuildWritesFiles:
         assert actual_second == expected_second
 
     def test_returns_path_objects(self, tmp_path):
-        steps = StepBuilder().return_("done", value="ok")
-        w = WorkflowBuilder().workflow("main", steps).build()
+        w = Workflow().returns("done", value="ok").build()
 
         written = build([("out.yaml", w)], output_dir=tmp_path)
 
@@ -113,8 +107,7 @@ class TestBuildOutputDir:
         nested = tmp_path / "a" / "b" / "c"
         assert not nested.exists()
 
-        steps = StepBuilder().return_("done", value="ok")
-        w = WorkflowBuilder().workflow("main", steps).build()
+        w = Workflow().returns("done", value="ok").build()
 
         build([("out.yaml", w)], output_dir=nested)
 
@@ -123,8 +116,7 @@ class TestBuildOutputDir:
 
     def test_creates_subdirectory_in_filename(self, tmp_path):
         """Filenames with path separators create subdirectories."""
-        steps = StepBuilder().return_("done", value="ok")
-        w = WorkflowBuilder().workflow("main", steps).build()
+        w = Workflow().returns("done", value="ok").build()
 
         build([("sub/dir/out.yaml", w)], output_dir=tmp_path)
 
@@ -133,8 +125,7 @@ class TestBuildOutputDir:
     def test_defaults_to_current_dir(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
 
-        steps = StepBuilder().return_("done", value="ok")
-        w = WorkflowBuilder().workflow("main", steps).build()
+        w = Workflow().returns("done", value="ok").build()
 
         written = build([("default_dir.yaml", w)])
 
@@ -142,8 +133,7 @@ class TestBuildOutputDir:
         assert written[0] == Path(".") / "default_dir.yaml"
 
     def test_accepts_string_output_dir(self, tmp_path):
-        steps = StepBuilder().return_("done", value="ok")
-        w = WorkflowBuilder().workflow("main", steps).build()
+        w = Workflow().returns("done", value="ok").build()
 
         build([("out.yaml", w)], output_dir=str(tmp_path))
 
@@ -159,12 +149,12 @@ class TestBuildYamlContent:
     """build() produces correct YAML content."""
 
     def test_simple_workflow_yaml(self, tmp_path):
-        steps = (
-            StepBuilder()
+        w = (
+            Workflow()
             .assign("init", x=10, y=20)
-            .return_("done", value=expr("x + y"))
+            .returns("done", value=expr("x + y"))
+            .build()
         )
-        w = WorkflowBuilder().workflow("main", steps).build()
 
         build([("flow.yaml", w)], output_dir=tmp_path)
 
@@ -174,14 +164,9 @@ class TestBuildYamlContent:
         assert parsed[1] == {"done": {"return": "${x + y}"}}
 
     def test_subworkflows_yaml(self, tmp_path):
-        main = StepBuilder().return_("done", value="ok")
-        helper = StepBuilder().return_("done", value="also ok")
-        w = (
-            WorkflowBuilder()
-            .workflow("main", main)
-            .workflow("helper", helper, params=["n"])
-            .build()
-        )
+        main = Subworkflow().returns("done", value="ok")
+        helper = Subworkflow(params=["n"]).returns("done", value="also ok")
+        w = Workflow({"main": main, "helper": helper}).build()
 
         build([("sub.yaml", w)], output_dir=tmp_path)
 
@@ -195,8 +180,7 @@ class TestBuildYamlContent:
         """Build to file, read back, parse -- should match original."""
         from cloud_workflows.models import parse_workflow
 
-        steps = StepBuilder().assign("init", x=42).return_("done", value=expr("x"))
-        w1 = WorkflowBuilder().workflow("main", steps).build()
+        w1 = Workflow().assign("init", x=42).returns("done", value=expr("x")).build()
 
         build([("rt.yaml", w1)], output_dir=tmp_path)
 
@@ -225,8 +209,7 @@ class TestBuildErrors:
             build([("a", "b", "c")], output_dir=tmp_path)  # type: ignore[list-item]
 
     def test_non_string_filename_raises(self, tmp_path):
-        steps = StepBuilder().return_("done", value="ok")
-        w = WorkflowBuilder().workflow("main", steps).build()
+        w = Workflow().returns("done", value="ok").build()
         with pytest.raises(TypeError, match="must be a.*tuple"):
             build([(123, w)], output_dir=tmp_path)  # type: ignore[list-item]
 
@@ -249,12 +232,12 @@ class TestBuildComposability:
         def common_setup() -> StepBuilder:
             return StepBuilder().assign("setup", initialized=True)
 
-        steps = (
-            StepBuilder()
+        w = (
+            Workflow()
             .apply(common_setup())
-            .return_("done", value=expr("initialized"))
+            .returns("done", value=expr("initialized"))
+            .build()
         )
-        w = WorkflowBuilder().workflow("main", steps).build()
 
         written = build([("composed.yaml", w)], output_dir=tmp_path)
 
@@ -265,10 +248,8 @@ class TestBuildComposability:
         """A factory function can produce the full workflows list."""
 
         def define_workflows():
-            main = StepBuilder().assign("init", x=10).return_("done", value=expr("x"))
-            return [
-                ("flow.yaml", WorkflowBuilder().workflow("main", main).build()),
-            ]
+            w = Workflow().assign("init", x=10).returns("done", value=expr("x")).build()
+            return [("flow.yaml", w)]
 
         written = build(define_workflows(), output_dir=tmp_path)
 

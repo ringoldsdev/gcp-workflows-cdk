@@ -30,6 +30,8 @@ from .models import (
 )
 from .builder import (
     StepBuilder,
+    Workflow,
+    Subworkflow,
     WorkflowBuilder,
     build,
 )
@@ -96,6 +98,8 @@ __all__ = [
     "SubworkflowsWorkflow",
     # Builders
     "StepBuilder",
+    "Workflow",
+    "Subworkflow",
     "WorkflowBuilder",
     "build",
     # Step sub-builders
