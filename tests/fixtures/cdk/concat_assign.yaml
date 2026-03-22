@@ -1,0 +1,18 @@
+- init:
+    assign:
+      - first_name: Alice
+      - last_name: Bob
+- build_greeting:
+    assign:
+      - greeting: '${"Hello, " + " " + first_name + " " + last_name + " " + "!"}'
+- build_full_name:
+    assign:
+      - full_name: ${first_name + " " + last_name}
+- build_csv:
+    assign:
+      - csv: ${a + ", " + b + ", " + c}
+- build_no_sep:
+    assign:
+      - joined: ${a + b + c}
+- done:
+    return: ${greeting}

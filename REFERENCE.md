@@ -52,6 +52,7 @@ Everything is importable from `cloud_workflows`.
 |---|---|
 | `to_yaml(workflow)` | Serialize a `Workflow` model to a YAML string |
 | `expr(body)` | Wrap a string in `${...}` — `expr("x + 1")` returns `"${x + 1}"` |
+| `concat(items, separator)` | Build a `+` concatenation expression from a list of items. Items can be `expr()` values, plain strings (auto-quoted), numbers, booleans, or `None`. Separator defaults to `""`. |
 | `workflow.to_dict()` | Serialize to Python dict/list (method on `SimpleWorkflow`/`SubworkflowsWorkflow`) |
 | `workflow.to_yaml()` | Serialize to YAML string (method on `SimpleWorkflow`/`SubworkflowsWorkflow`) |
 
@@ -146,10 +147,10 @@ Steps(*, params=None)
 `.step()` and `.merge()` return `self`, enabling fluent chains:
 
 ```python
-s = Steps()
-s.step("init", Assign(x=10)) \
- .step("log", Call("sys.log", args={"text": expr("x")})) \
- .step("done", Return(expr("x")))
+s = Steps() \
+    .step("init", Assign(x=10)) \
+    .step("log", Call("sys.log", args={"text": expr("x")})) \
+    .step("done", Return(expr("x")))
 ```
 
 ### Step Classes
@@ -338,26 +339,25 @@ Each workflow value must be a `dict[str, Steps]` with a required `"main"` key:
 Steps containers are composable via `.merge()`:
 
 ```python
-common = Steps()
-common.step("log", Call("sys.log", args={"text": "starting"}))
+common = Steps() \
+    .step("log", Call("sys.log", args={"text": "starting"}))
 
-main = Steps()
-main.merge(common)              # merges steps from common
-main.step("done", Return("ok"))
+main = Steps() \
+    .merge(common) \
+    .step("done", Return("ok"))
 ```
 
 Factory functions that return `Steps` instances are the primary composition pattern:
 
 ```python
 def logging_steps(message):
-    s = Steps()
-    s.step("log", Call("sys.log", args={"text": message}))
-    return s
+    return Steps() \
+        .step("log", Call("sys.log", args={"text": message}))
 
-main = Steps()
-main.step("init", Assign(status="starting"))
-main.merge(logging_steps("Workflow started"))
-main.step("done", Return("ok"))
+main = Steps() \
+    .step("init", Assign(status="starting")) \
+    .merge(logging_steps("Workflow started")) \
+    .step("done", Return("ok"))
 ```
 
 ---
@@ -691,4 +691,4 @@ cloud-workflows-generator/
 PYTHONPATH=src python -m pytest tests/ -v
 ```
 
-399 tests: 304 validation/CDK + 95 builder (step builder + workflow builder + build).
+410 tests: 304 validation/CDK + 106 builder (step builder + workflow builder + build).

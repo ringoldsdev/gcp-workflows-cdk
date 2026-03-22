@@ -4,6 +4,7 @@ from .models import (
     parse_workflow,
     to_yaml,
     expr,
+    concat,
     Workflow,
     SimpleWorkflow,
     SubworkflowsWorkflow,
@@ -113,6 +114,7 @@ __all__ = [
     # Serialization
     "to_yaml",
     "expr",
+    "concat",
     # Full analysis pipeline
     "analyze_yaml",
     "analyze_workflow",

@@ -23,6 +23,7 @@ from cloud_workflows import (
     Backoff,
     analyze_workflow,
     expr,
+    concat,
 )
 from cloud_workflows.models import (
     AssignStep,
@@ -905,3 +906,91 @@ class TestErrors:
         """Pydantic validation runs eagerly at model construction time."""
         with pytest.raises(Exception):
             AssignStep(assign=[])
+
+
+# =============================================================================
+# concat() expression helper
+# =============================================================================
+
+
+class TestConcat:
+    """Tests for the concat() expression helper."""
+
+    def test_concat_with_separator(self):
+        """concat() interleaves separator between items."""
+        result = concat(["Hello", expr("name")], " ")
+        assert result == '${"Hello" + " " + name}'
+
+    def test_concat_without_separator(self):
+        """concat() joins items directly when separator is empty."""
+        result = concat([expr("a"), expr("b"), expr("c")])
+        assert result == "${a + b + c}"
+
+    def test_concat_single_item(self):
+        """Single item returns just that item wrapped."""
+        result = concat([expr("name")])
+        assert result == "${name}"
+
+    def test_concat_single_string_literal(self):
+        """Single string literal gets quoted."""
+        result = concat(["hello"])
+        assert result == '${"hello"}'
+
+    def test_concat_empty_list(self):
+        """Empty list returns empty string expression."""
+        result = concat([])
+        assert result == '${""}'
+
+    def test_concat_all_literals(self):
+        """All plain string items are quoted."""
+        result = concat(["a", "b", "c"], ", ")
+        assert result == '${"a" + ", " + "b" + ", " + "c"}'
+
+    def test_concat_mixed_items(self):
+        """Mix of expressions and literals."""
+        result = concat(["Hello, ", expr("first_name"), " ", expr("last_name"), "!"])
+        assert result == '${"Hello, " + first_name + " " + last_name + "!"}'
+
+    def test_concat_with_numbers(self):
+        """Numbers are converted to expression fragments."""
+        result = concat([expr("prefix"), 42], "-")
+        assert result == '${prefix + "-" + 42}'
+
+    def test_concat_with_bool_and_none(self):
+        """Booleans and None are converted."""
+        assert concat([True]) == "${true}"
+        assert concat([False]) == "${false}"
+        assert concat([None]) == "${null}"
+
+    def test_concat_invalid_type_raises(self):
+        """Non-supported types raise TypeError."""
+        with pytest.raises(TypeError, match="got list"):
+            concat([[1, 2]])
+
+    def test_concat_in_workflow_fixture(self):
+        """concat() values serialize correctly in a workflow (fixture comparison)."""
+        s = (
+            Steps()
+            .step("init", Assign(first_name="Alice", last_name="Bob"))
+            .step(
+                "build_greeting",
+                Assign(
+                    greeting=concat(
+                        ["Hello, ", expr("first_name"), expr("last_name"), "!"], " "
+                    )
+                ),
+            )
+            .step(
+                "build_full_name",
+                Assign(full_name=concat([expr("first_name"), expr("last_name")], " ")),
+            )
+            .step(
+                "build_csv", Assign(csv=concat([expr("a"), expr("b"), expr("c")], ", "))
+            )
+            .step(
+                "build_no_sep", Assign(joined=concat([expr("a"), expr("b"), expr("c")]))
+            )
+            .step("done", Return(expr("greeting")))
+        )
+        expected = yaml.safe_load(load_fixture("cdk", "concat_assign.yaml"))
+        assert _to_dict(s) == expected

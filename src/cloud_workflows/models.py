@@ -35,6 +35,71 @@ def expr(body: str) -> str:
     return f"${{{body}}}"
 
 
+def _to_expr_fragment(value: Any) -> str:
+    """Convert a Python value to a GCP Workflows expression fragment.
+
+    - Strings wrapped in ${...} are unwrapped to their expression body.
+    - Plain strings are quoted as string literals.
+    - Numbers (int, float) are converted to their string representation.
+    - Booleans become ``true`` / ``false``.
+    - ``None`` becomes ``null``.
+    """
+    if isinstance(value, str):
+        if value.startswith("${") and value.endswith("}"):
+            return value[2:-1]
+        # Escape backslashes and double quotes inside the string
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if value is None:
+        return "null"
+    raise TypeError(
+        f"concat() items must be str, int, float, bool, or None — got {type(value).__name__}"
+    )
+
+
+def concat(items: list, separator: str = "") -> str:
+    """Build a GCP Workflows ``+`` concatenation expression.
+
+    Each item is converted to an expression fragment:
+
+    - ``expr("var")`` (i.e. ``"${var}"``) is unwrapped to ``var``
+    - Plain strings become quoted literals: ``"hello"``
+    - Numbers, booleans, and ``None`` become their GCP literal form
+
+    The *separator* is always treated as a string literal and is
+    interleaved between items with ``+``.
+
+    Returns a ``${...}`` wrapped expression string.
+
+    Examples::
+
+        concat(["Hello", expr("name")], " ")
+        # => '${"Hello" + " " + name}'
+
+        concat([expr("a"), expr("b"), expr("c")], ", ")
+        # => '${a + ", " + b + ", " + c}'
+    """
+    if not items:
+        return expr('""')
+
+    fragments = [_to_expr_fragment(item) for item in items]
+
+    if separator:
+        escaped_sep = separator.replace("\\", "\\\\").replace('"', '\\"')
+        sep_fragment = f'"{escaped_sep}"'
+        interleaved = [fragments[0]]
+        for frag in fragments[1:]:
+            interleaved.append(sep_fragment)
+            interleaved.append(frag)
+        return expr(" + ".join(interleaved))
+
+    return expr(" + ".join(fragments))
+
+
 # =============================================================================
 # 1. BackoffConfig (leaf model)
 # =============================================================================
