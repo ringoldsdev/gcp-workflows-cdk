@@ -34,6 +34,7 @@ from .builder import (
     build,
 )
 from .steps import (
+    StepBase,
     Assign,
     Call,
     Return_,
@@ -92,6 +93,7 @@ __all__ = [
     "WorkflowBuilder",
     "build",
     # Step sub-builders
+    "StepBase",
     "Assign",
     "Call",
     "Return_",

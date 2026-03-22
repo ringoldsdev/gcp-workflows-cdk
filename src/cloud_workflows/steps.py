@@ -1,11 +1,12 @@
 """Step sub-builder classes for fluent step configuration.
 
-Each class wraps a specific step type with chainable typed methods.
-All classes have:
-- A constructor for required args
-- Chainable methods for optional/additional configuration
-- .apply() for type-safe partial merging
-- .build() returning the corresponding Pydantic model
+All step types extend ``StepBase``, which provides:
+- A dict-based ``_state`` store
+- ``set(path, value)`` using *jsonpath-ng* for nested-key creation
+- ``apply(source)`` using *deepmerge* for deep-merging another builder's state
+
+Subclasses add typed convenience methods (e.g. ``Call.func()``, ``For.in_()``)
+and a ``build()`` method that emits the matching Pydantic model.
 
 Usage:
     from cloud_workflows.steps import Assign, Call, Return_, For, Parallel, Try_
@@ -13,13 +14,17 @@ Usage:
     # Used directly:
     Assign().set("x", 10).set("y", 20).build()  # → AssignStep
 
-    # Or via lambda in StepBuilder.step():
-    sb.step("init", "assign", lambda a: a.set("x", 10).set("y", 20))
+    # Or via lambda in StepBuilder:
+    sb.assign("init", lambda a: a.set("x", 10).set("y", 20))
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar, Union
+
+from deepmerge import Merger
+from jsonpath_ng import parse as jp_parse
 
 from .models import (
     AssignStep,
@@ -43,6 +48,7 @@ from .models import (
 )
 
 __all__ = [
+    "StepBase",
     "Assign",
     "Call",
     "Return_",
@@ -54,24 +60,27 @@ __all__ = [
     "Steps",
 ]
 
-# Sentinel for "not yet set" (distinct from None which may be a valid value)
+# ---------------------------------------------------------------------------
+# Sentinel for "not provided" in Switch.condition() where None may be valid
+# ---------------------------------------------------------------------------
 _UNSET = object()
 
-
-def _unnest_dotpath(key: str, value: Any) -> Dict[str, Any]:
-    """Convert a dot-separated key into a nested dict.
-
-    ``_unnest_dotpath("a.b.c", 1)`` returns ``{"a": {"b": {"c": 1}}}``.
-    Keys without dots are returned as ``{key: value}``.
-    """
-    parts = key.split(".")
-    result: Any = value
-    for part in reversed(parts):
-        result = {part: result}
-    return result
-
+# ---------------------------------------------------------------------------
+# Merger configuration
+# ---------------------------------------------------------------------------
+# Dicts: recursive merge.  Lists: append (additive).  Scalars: override.
+_merger = Merger(
+    [(dict, ["merge"]), (list, ["append"])],
+    ["override"],
+    ["override"],
+)
 
 _T = TypeVar("_T")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _resolve_source(
@@ -80,12 +89,6 @@ def _resolve_source(
     """Resolve an apply() source to the expected type.
 
     Handles callables that return the expected type or None.
-
-    Returns:
-        The resolved instance, or None if a callable returned None.
-
-    Raises:
-        TypeError: If source is not the expected type.
     """
     if callable(source) and not isinstance(source, expected_type):
         result = source()
@@ -123,229 +126,288 @@ def _resolve_step_builder(sb: Any) -> List[Dict[str, Any]]:
     return sb
 
 
-# =============================================================================
+# ============================================================================
+# StepBase
+# ============================================================================
+
+
+class StepBase:
+    """Base class for all step sub-builders.
+
+    Stores internal state in a plain ``dict`` (``self._state``).
+
+    * **set(path, value)** — set a value at an arbitrary path.  Dot-separated
+      paths (e.g. ``"a.b.c"``) create nested dicts automatically via
+      *jsonpath-ng* ``update_or_create``.
+    * **get(key, default)** — read a top-level key from state.
+    * **has(key)** — check if a top-level key is present.
+    * **apply(source)** — deep-merge another builder of the **same type**
+      into this one using *deepmerge*.
+    """
+
+    def __init__(self, **initial: Any) -> None:
+        self._state: Dict[str, Any] = dict(initial)
+
+    # -- state access helpers ------------------------------------------------
+
+    def set(self, path: str, value: Any) -> StepBase:
+        """Set a value at *path*, creating nested structure as needed.
+
+        ``set("a.b.c", 1)`` results in ``{"a": {"b": {"c": 1}}}`` being
+        merged into ``_state``.
+        """
+        if "." in path:
+            # Build a temporary nested dict via jsonpath-ng, then deep-merge
+            # it into _state so existing keys are preserved.
+            tmp: Dict[str, Any] = {}
+            jp_parse(path).update_or_create(tmp, value)
+            _merger.merge(self._state, tmp)
+        else:
+            self._state[path] = value
+        return self
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Read a top-level key from the internal state."""
+        return self._state.get(key, default)
+
+    def has(self, key: str) -> bool:
+        """Return ``True`` if *key* is present in the state dict."""
+        return key in self._state
+
+    # -- deep-merge ----------------------------------------------------------
+
+    def apply(self, source: Any) -> StepBase:
+        """Deep-merge *source*'s state into this builder.
+
+        *source* may be:
+        - An instance of the **same class** — its ``_state`` is deep-merged.
+        - A callable returning such an instance (or ``None`` to skip).
+
+        Raises ``TypeError`` if the resolved source is the wrong type.
+        """
+        resolved = _resolve_source(source, type(self), type(self).__name__)
+        if resolved is None:
+            return self
+        _merger.merge(self._state, deepcopy(resolved._state))
+        return self
+
+    def build(self) -> Any:
+        """Build the corresponding Pydantic model.
+
+        Subclasses must override this method.
+        """
+        raise NotImplementedError
+
+
+# ============================================================================
 # Assign
-# =============================================================================
+# ============================================================================
 
 
-class Assign:
+class Assign(StepBase):
     """Builder for AssignStep.
 
-    Usage:
+    Internal state keys:
+        items : List[Dict[str, Any]]  — accumulated assignments
+        next  : Optional[str]         — jump target
+
+    Usage::
+
         Assign().set("x", 10).set("y", 20).build()
         Assign().items([{"x": 10}, {"y": 20}]).build()
     """
 
     def __init__(self) -> None:
-        self._items: List[Dict[str, Any]] = []
-        self._next: Optional[str] = None
+        super().__init__(items=[], next=None)
 
-    def set(self, key: str, value: Any) -> Assign:
+    # -- override set() to append to items instead of setting a path ---------
+
+    def set(self, key: str, value: Any) -> Assign:  # type: ignore[override]
         """Add a single assignment.
 
         Dot-separated keys are unnested into nested dicts:
         ``set("a.b.c", 1)`` appends ``{"a": {"b": {"c": 1}}}``.
         """
-        self._items.append(_unnest_dotpath(key, value))
+        if "." in key:
+            nested: Dict[str, Any] = {}
+            jp_parse(key).update_or_create(nested, value)
+            self._state["items"].append(nested)
+        else:
+            self._state["items"].append({key: value})
         return self
 
     def items(self, items: List[Dict[str, Any]]) -> Assign:
         """Add multiple assignments from a list of single-key dicts."""
-        self._items.extend(items)
+        self._state["items"].extend(items)
         return self
 
     def next(self, target: str) -> Assign:
         """Set the 'next' jump target."""
-        self._next = target
-        return self
-
-    def apply(self, source: Union[Assign, Callable[[], Optional[Assign]]]) -> Assign:
-        """Merge another Assign builder into this one.
-
-        - Items are appended (additive).
-        - 'next' is overwritten if the source has it set.
-
-        Args:
-            source: An Assign instance, or a callable returning Assign or None.
-
-        Raises:
-            TypeError: If source is not an Assign or callable returning Assign/None.
-        """
-        resolved = _resolve_source(source, Assign, "Assign")
-        if resolved is None:
-            return self
-        self._items.extend(resolved._items)
-        if resolved._next is not None:
-            self._next = resolved._next
+        self._state["next"] = target
         return self
 
     def build(self) -> AssignStep:
-        """Build the AssignStep Pydantic model."""
-        if not self._items:
+        items = self._state["items"]
+        if not items:
             raise ValueError("Assign builder has no items — call .set() or .items()")
-        return AssignStep(assign=self._items, next=self._next)
+        return AssignStep(assign=items, next=self._state["next"])
 
 
-# =============================================================================
+# ============================================================================
 # Call
-# =============================================================================
+# ============================================================================
 
 
-class Call:
+class Call(StepBase):
     """Builder for CallStep.
 
-    Usage:
+    Internal state keys:
+        func   : str               — function name
+        args   : Dict | None       — call arguments
+        result : str | None        — result variable name
+        next   : str | None        — jump target
+
+    Usage::
+
         Call("sys.log").args(text="hello").build()
-        Call("http.get").args(url="...").result("resp").build()
     """
 
     def __init__(self, function: str = "") -> None:
-        self._func: str = function
-        self._args: Any = _UNSET
-        self._result: Any = _UNSET
-        self._next: Optional[str] = None
+        super().__init__()
+        if function:
+            self._state["func"] = function
 
     def func(self, name: str) -> Call:
         """Set or overwrite the function to call."""
-        self._func = name
+        self._state["func"] = name
         return self
 
     def args(self, **kwargs: Any) -> Call:
         """Set the call arguments."""
-        self._args = kwargs
+        self._state["args"] = kwargs
         return self
 
     def result(self, name: str) -> Call:
         """Set the result variable name."""
-        self._result = name
+        self._state["result"] = name
         return self
 
     def next(self, target: str) -> Call:
         """Set the 'next' jump target."""
-        self._next = target
-        return self
-
-    def apply(self, source: Union[Call, Callable[[], Optional[Call]]]) -> Call:
-        """Merge another Call builder into this one.
-
-        Overwrites only fields that the source has explicitly set.
-        """
-        resolved = _resolve_source(source, Call, "Call")
-        if resolved is None:
-            return self
-        if resolved._func:
-            self._func = resolved._func
-        if resolved._args is not _UNSET:
-            self._args = resolved._args
-        if resolved._result is not _UNSET:
-            self._result = resolved._result
-        if resolved._next is not None:
-            self._next = resolved._next
+        self._state["next"] = target
         return self
 
     def build(self) -> CallStep:
-        """Build the CallStep Pydantic model."""
-        if not self._func:
+        func = self._state.get("func", "")
+        if not func:
             raise ValueError(
                 "Call builder has no function — call .func() or pass it to constructor"
             )
         return CallStep(
-            call=self._func,
-            args=self._args if self._args is not _UNSET else None,
-            result=self._result if self._result is not _UNSET else None,
-            next=self._next,
+            call=func,
+            args=self._state.get("args"),
+            result=self._state.get("result"),
+            next=self._state.get("next"),
         )
 
+    def apply(self, source: Any) -> Call:
+        """Merge another Call builder — overwrites only fields the source has set.
 
-# =============================================================================
+        Unlike the default deep-merge, Call treats each field as a scalar
+        (args is replaced wholesale, not recursively merged).
+        """
+        resolved = _resolve_source(source, Call, "Call")
+        if resolved is None:
+            return self
+        for key, value in resolved._state.items():
+            self._state[key] = deepcopy(value)
+        return self
+
+
+# ============================================================================
 # Return_
-# =============================================================================
+# ============================================================================
 
 
-class Return_:
+class Return_(StepBase):
     """Builder for ReturnStep.
 
-    Usage:
+    Internal state keys:
+        value : Any  — the return value
+
+    Usage::
+
         Return_("ok").build()
         Return_(expr("x + y")).build()
-        Return_().value("ok").build()
     """
 
-    def __init__(self, val: Any = _UNSET) -> None:
-        self._value: Any = val
+    def __init__(self, val: Any = None, *, _has_value: bool = False) -> None:
+        super().__init__()
+        if val is not None or _has_value:
+            self._state["value"] = val
 
     def value(self, v: Any) -> Return_:
         """Set the return value."""
-        self._value = v
-        return self
-
-    def apply(self, source: Union[Return_, Callable[[], Optional[Return_]]]) -> Return_:
-        """Merge another Return_ builder — overwrites value."""
-        resolved = _resolve_source(source, Return_, "Return_")
-        if resolved is None:
-            return self
-        if resolved._value is not _UNSET:
-            self._value = resolved._value
+        self._state["value"] = v
         return self
 
     def build(self) -> ReturnStep:
-        """Build the ReturnStep Pydantic model."""
-        if self._value is _UNSET:
+        if not self.has("value"):
             raise ValueError(
                 "Return_ builder has no value — call .value() or pass it to constructor"
             )
-        return ReturnStep(return_=self._value)
+        return ReturnStep(return_=self._state["value"])
 
 
-# =============================================================================
+# ============================================================================
 # Raise_
-# =============================================================================
+# ============================================================================
 
 
-class Raise_:
+class Raise_(StepBase):
     """Builder for RaiseStep.
 
-    Usage:
+    Internal state keys:
+        value : Any  — the raise value
+
+    Usage::
+
         Raise_({"code": 404}).build()
         Raise_(expr("e")).build()
-        Raise_().value("error").build()
     """
 
-    def __init__(self, val: Any = _UNSET) -> None:
-        self._value: Any = val
+    def __init__(self, val: Any = None, *, _has_value: bool = False) -> None:
+        super().__init__()
+        if val is not None or _has_value:
+            self._state["value"] = val
 
     def value(self, v: Any) -> Raise_:
         """Set the raise value."""
-        self._value = v
-        return self
-
-    def apply(self, source: Union[Raise_, Callable[[], Optional[Raise_]]]) -> Raise_:
-        """Merge another Raise_ builder — overwrites value."""
-        resolved = _resolve_source(source, Raise_, "Raise_")
-        if resolved is None:
-            return self
-        if resolved._value is not _UNSET:
-            self._value = resolved._value
+        self._state["value"] = v
         return self
 
     def build(self) -> RaiseStep:
-        """Build the RaiseStep Pydantic model."""
-        if self._value is _UNSET:
+        if not self.has("value"):
             raise ValueError(
                 "Raise_ builder has no value — call .value() or pass it to constructor"
             )
-        return RaiseStep(raise_=self._value)
+        return RaiseStep(raise_=self._state["value"])
 
 
-# =============================================================================
+# ============================================================================
 # Switch
-# =============================================================================
+# ============================================================================
 
 
-class Switch:
+class Switch(StepBase):
     """Builder for SwitchStep.
 
-    Usage:
+    Internal state keys:
+        conditions : List[Dict[str, Any]]  — switch conditions
+        next       : str | None            — fallthrough target
+
+    Usage::
+
         Switch()
             .condition(expr("x > 0"), next="positive")
             .condition(True, next="negative")
@@ -353,8 +415,7 @@ class Switch:
     """
 
     def __init__(self) -> None:
-        self._conditions: List[Dict[str, Any]] = []
-        self._next: Optional[str] = None
+        super().__init__(conditions=[], next=None)
 
     def condition(
         self,
@@ -371,7 +432,6 @@ class Switch:
         if next is not None:
             entry["next"] = next
         if steps is not None:
-            # steps can be a StepBuilder — resolve at build time
             entry["steps"] = steps
         if assign is not None:
             entry["assign"] = assign
@@ -379,139 +439,118 @@ class Switch:
             entry["return"] = return_
         if raise_ is not _UNSET:
             entry["raise"] = raise_
-        self._conditions.append(entry)
+        self._state["conditions"].append(entry)
         return self
 
     def next(self, target: str) -> Switch:
         """Set the 'next' fallthrough target."""
-        self._next = target
-        return self
-
-    def apply(self, source: Union[Switch, Callable[[], Optional[Switch]]]) -> Switch:
-        """Merge another Switch builder.
-
-        - Conditions are appended (additive).
-        - 'next' is overwritten if the source has it set.
-        """
-        resolved = _resolve_source(source, Switch, "Switch")
-        if resolved is None:
-            return self
-        self._conditions.extend(resolved._conditions)
-        if resolved._next is not None:
-            self._next = resolved._next
+        self._state["next"] = target
         return self
 
     def build(self) -> SwitchStep:
-        """Build the SwitchStep Pydantic model."""
-        if not self._conditions:
+        conditions_raw = self._state["conditions"]
+        if not conditions_raw:
             raise ValueError("Switch builder has no conditions — call .condition()")
+
+        from .builder import StepBuilder
+
         conditions = []
-        for entry in self._conditions:
-            # Resolve StepBuilder or callable in steps if present
+        for entry in conditions_raw:
             raw_steps = entry.get("steps")
             if raw_steps is not None:
-                from .builder import StepBuilder
-
                 if isinstance(raw_steps, StepBuilder) or callable(raw_steps):
                     entry = dict(entry)
                     entry["steps"] = _resolve_step_builder(raw_steps)
             conditions.append(SwitchCondition(**entry))
-        return SwitchStep(switch=conditions, next=self._next)
+        return SwitchStep(switch=conditions, next=self._state["next"])
 
 
-# =============================================================================
+# ============================================================================
 # For
-# =============================================================================
+# ============================================================================
 
 
-class For:
+class For(StepBase):
     """Builder for ForStep.
 
-    Usage:
+    Internal state keys:
+        value : str           — loop variable name
+        in    : Any           — collection to iterate
+        range : Any           — range to iterate
+        index : str | None    — index variable name
+        steps : Any           — loop body (StepBuilder, callable, or list)
+
+    Usage::
+
         For("item").in_(["a", "b"]).steps(step_builder).build()
-        For("i").range_([0, 10]).steps(step_builder).build()
     """
 
     def __init__(self, value: str = "") -> None:
-        self._value: str = value
-        self._in: Any = _UNSET
-        self._range: Any = _UNSET
-        self._index: Optional[str] = None
-        self._steps: Any = None  # StepBuilder or None
+        super().__init__(value=value)
 
     def value(self, name: str) -> For:
         """Set the loop variable name."""
-        self._value = name
+        self._state["value"] = name
         return self
 
     def in_(self, items: Any) -> For:
         """Set the collection to iterate over."""
-        self._in = items
+        self._state["in"] = items
         return self
 
     def range_(self, r: Any) -> For:
         """Set the range to iterate over."""
-        self._range = r
+        self._state["range"] = r
         return self
 
     def index(self, name: str) -> For:
         """Set the index variable name."""
-        self._index = name
+        self._state["index"] = name
         return self
 
     def steps(self, sb: Any) -> For:
-        """Set the loop body steps (a StepBuilder)."""
-        self._steps = sb
-        return self
-
-    def apply(self, source: Union[For, Callable[[], Optional[For]]]) -> For:
-        """Merge another For builder — overwrites set fields, replaces steps."""
-        resolved = _resolve_source(source, For, "For")
-        if resolved is None:
-            return self
-        if resolved._value:
-            self._value = resolved._value
-        if resolved._in is not _UNSET:
-            self._in = resolved._in
-        if resolved._range is not _UNSET:
-            self._range = resolved._range
-        if resolved._index is not None:
-            self._index = resolved._index
-        if resolved._steps is not None:
-            self._steps = resolved._steps
+        """Set the loop body steps (a StepBuilder, callable, or list)."""
+        self._state["steps"] = sb
         return self
 
     def build(self) -> ForStep:
-        """Build the ForStep Pydantic model."""
-        if not self._value:
+        val = self._state.get("value", "")
+        if not val:
             raise ValueError(
                 "For builder has no value variable — pass it to constructor or call .value()"
             )
-        if self._steps is None:
+        if not self.has("steps"):
             raise ValueError("For builder has no steps — call .steps()")
 
-        step_dicts = _resolve_step_builder(self._steps)
+        step_dicts = _resolve_step_builder(self._state["steps"])
 
         return ForStep(
             for_=ForBody(
-                value=self._value,
-                index=self._index,
-                in_=self._in if self._in is not _UNSET else None,
-                range=self._range if self._range is not _UNSET else None,
+                value=val,
+                index=self._state.get("index"),
+                in_=self._state.get("in"),
+                range=self._state.get("range"),
                 steps=step_dicts,
             )
         )
 
 
-# =============================================================================
+# ============================================================================
 # Parallel
-# =============================================================================
+# ============================================================================
 
 
-class Parallel:
+class Parallel(StepBase):
     """Builder for ParallelStep.
 
-    Usage:
+    Internal state keys:
+        branches         : List[Tuple[str, Any]]  — (name, steps) pairs
+        shared           : List[str] | None
+        exception_policy : str | None
+        concurrency_limit: int | str | None
+
+    Usage::
+
         Parallel()
             .branch("b1", step_builder_1)
             .branch("b2", step_builder_2)
@@ -519,80 +558,64 @@ class Parallel:
     """
 
     def __init__(self) -> None:
-        self._branches: List[tuple[str, Any]] = []  # (name, StepBuilder)
-        self._shared: Optional[List[str]] = None
-        self._exception_policy: Optional[str] = None
-        self._concurrency_limit: Optional[Union[int, str]] = None
+        super().__init__(branches=[])
 
     def branch(self, name: str, steps: Any) -> Parallel:
         """Add a parallel branch."""
-        self._branches.append((name, steps))
+        self._state["branches"].append((name, steps))
         return self
 
     def shared(self, vars: List[str]) -> Parallel:
         """Set shared variable names."""
-        self._shared = vars
+        self._state["shared"] = vars
         return self
 
     def exception_policy(self, policy: str) -> Parallel:
         """Set exception policy (e.g. 'continueAll')."""
-        self._exception_policy = policy
+        self._state["exception_policy"] = policy
         return self
 
     def concurrency_limit(self, limit: Union[int, str]) -> Parallel:
         """Set concurrency limit."""
-        self._concurrency_limit = limit
-        return self
-
-    def apply(
-        self, source: Union[Parallel, Callable[[], Optional[Parallel]]]
-    ) -> Parallel:
-        """Merge another Parallel builder.
-
-        - Branches are appended (additive).
-        - shared/exception_policy/concurrency_limit are overwritten if set.
-        """
-        resolved = _resolve_source(source, Parallel, "Parallel")
-        if resolved is None:
-            return self
-        self._branches.extend(resolved._branches)
-        if resolved._shared is not None:
-            self._shared = resolved._shared
-        if resolved._exception_policy is not None:
-            self._exception_policy = resolved._exception_policy
-        if resolved._concurrency_limit is not None:
-            self._concurrency_limit = resolved._concurrency_limit
+        self._state["concurrency_limit"] = limit
         return self
 
     def build(self) -> ParallelStep:
-        """Build the ParallelStep Pydantic model."""
-        if not self._branches:
+        branch_list = self._state.get("branches", [])
+        if not branch_list:
             raise ValueError("Parallel builder has no branches — call .branch()")
 
         branches = []
-        for name, steps in self._branches:
+        for name, steps in branch_list:
             step_dicts = _resolve_step_builder(steps)
             branches.append(Branch(name=name, steps=step_dicts))
 
         return ParallelStep(
             parallel=ParallelBody(
                 branches=branches,
-                shared=self._shared,
-                exception_policy=self._exception_policy,
-                concurrency_limit=self._concurrency_limit,
+                shared=self._state.get("shared"),
+                exception_policy=self._state.get("exception_policy"),
+                concurrency_limit=self._state.get("concurrency_limit"),
             )
         )
 
 
-# =============================================================================
+# ============================================================================
 # Try_
-# =============================================================================
+# ============================================================================
 
 
-class Try_:
+class Try_(StepBase):
     """Builder for TryStep.
 
-    Usage:
+    Internal state keys:
+        body         : Any           — try body (StepBuilder, callable, or model)
+        retry        : Dict | str    — retry configuration
+        except_as    : str | None    — except variable name
+        except_steps : Any           — except handler steps
+
+    Usage::
+
         Try_(body_step_builder)
             .retry(predicate=expr("e.code == 429"), max_retries=3, backoff={...})
             .except_(as_="e", steps=except_step_builder)
@@ -600,14 +623,13 @@ class Try_:
     """
 
     def __init__(self, body: Any = None) -> None:
-        self._body: Any = body  # StepBuilder
-        self._retry: Any = _UNSET
-        self._except_as: Optional[str] = None
-        self._except_steps: Any = None  # StepBuilder
+        super().__init__()
+        if body is not None:
+            self._state["body"] = body
 
     def body(self, sb: Any) -> Try_:
-        """Set the try body (a StepBuilder)."""
-        self._body = sb
+        """Set the try body (a StepBuilder, callable, or model)."""
+        self._state["body"] = sb
         return self
 
     def retry(
@@ -618,7 +640,7 @@ class Try_:
         backoff: Dict[str, Any],
     ) -> Try_:
         """Set retry configuration."""
-        self._retry = {
+        self._state["retry"] = {
             "predicate": predicate,
             "max_retries": max_retries,
             "backoff": backoff,
@@ -627,28 +649,12 @@ class Try_:
 
     def except_(self, *, as_: str, steps: Any) -> Try_:
         """Set except handler."""
-        self._except_as = as_
-        self._except_steps = steps
-        return self
-
-    def apply(self, source: Union[Try_, Callable[[], Optional[Try_]]]) -> Try_:
-        """Merge another Try_ builder — overwrites body/retry/except."""
-        resolved = _resolve_source(source, Try_, "Try_")
-        if resolved is None:
-            return self
-        if resolved._body is not None:
-            self._body = resolved._body
-        if resolved._retry is not _UNSET:
-            self._retry = resolved._retry
-        if resolved._except_as is not None:
-            self._except_as = resolved._except_as
-        if resolved._except_steps is not None:
-            self._except_steps = resolved._except_steps
+        self._state["except_as"] = as_
+        self._state["except_steps"] = steps
         return self
 
     def build(self) -> TryStep:
-        """Build the TryStep Pydantic model."""
-        if self._body is None:
+        if not self.has("body"):
             raise ValueError(
                 "Try_ builder has no body — call .body() or pass it to constructor"
             )
@@ -656,14 +662,13 @@ class Try_:
         from .builder import StepBuilder
 
         # Resolve callable body to StepBuilder first
-        body = self._body
+        body = self._state["body"]
         if callable(body) and not isinstance(body, StepBuilder):
             sb = StepBuilder()
             body(sb)
             body = sb
 
-        # Resolve body: StepBuilder with a single call step → TryCallBody
-        # StepBuilder with multiple steps → TryStepsBody
+        # Determine try body type
         if isinstance(body, StepBuilder):
             body_steps = body.build()
             if len(body_steps) == 1:
@@ -683,28 +688,31 @@ class Try_:
 
         # Resolve retry
         retry = None
-        if self._retry is not _UNSET:
-            if isinstance(self._retry, dict):
-                backoff_data = self._retry["backoff"]
+        retry_raw = self._state.get("retry")
+        if retry_raw is not None:
+            if isinstance(retry_raw, dict):
+                backoff_data = retry_raw["backoff"]
                 if isinstance(backoff_data, dict):
                     backoff = BackoffConfig(**backoff_data)
                 else:
                     backoff = backoff_data
                 retry = RetryConfig(
-                    predicate=self._retry["predicate"],
-                    max_retries=self._retry["max_retries"],
+                    predicate=retry_raw["predicate"],
+                    max_retries=retry_raw["max_retries"],
                     backoff=backoff,
                 )
-            elif isinstance(self._retry, str):
-                retry = self._retry
+            elif isinstance(retry_raw, str):
+                retry = retry_raw
             else:
-                retry = self._retry
+                retry = retry_raw
 
         # Resolve except
         except_body = None
-        if self._except_as is not None and self._except_steps is not None:
-            except_step_dicts = _resolve_step_builder(self._except_steps)
-            except_body = ExceptBody(as_=self._except_as, steps=except_step_dicts)
+        except_as = self._state.get("except_as")
+        except_steps = self._state.get("except_steps")
+        if except_as is not None and except_steps is not None:
+            except_step_dicts = _resolve_step_builder(except_steps)
+            except_body = ExceptBody(as_=except_as, steps=except_step_dicts)
 
         return TryStep(
             try_=try_body,
@@ -713,50 +721,44 @@ class Try_:
         )
 
 
-# =============================================================================
+# ============================================================================
 # Steps (nested steps)
-# =============================================================================
+# ============================================================================
 
 
-class Steps:
+class Steps(StepBase):
     """Builder for NestedStepsStep.
 
-    Usage:
+    Internal state keys:
+        body : Any           — nested steps (StepBuilder, callable, or list)
+        next : str | None    — jump target
+
+    Usage::
+
         Steps(inner_step_builder).next("done").build()
     """
 
     def __init__(self, body: Any = None) -> None:
-        self._body: Any = body  # StepBuilder
-        self._next: Optional[str] = None
+        super().__init__()
+        if body is not None:
+            self._state["body"] = body
 
     def body(self, sb: Any) -> Steps:
-        """Set the nested steps body (a StepBuilder)."""
-        self._body = sb
+        """Set the nested steps body (a StepBuilder, callable, or list)."""
+        self._state["body"] = sb
         return self
 
     def next(self, target: str) -> Steps:
         """Set the 'next' jump target."""
-        self._next = target
-        return self
-
-    def apply(self, source: Union[Steps, Callable[[], Optional[Steps]]]) -> Steps:
-        """Merge another Steps builder — replaces body, overwrites next."""
-        resolved = _resolve_source(source, Steps, "Steps")
-        if resolved is None:
-            return self
-        if resolved._body is not None:
-            self._body = resolved._body
-        if resolved._next is not None:
-            self._next = resolved._next
+        self._state["next"] = target
         return self
 
     def build(self) -> NestedStepsStep:
-        """Build the NestedStepsStep Pydantic model."""
-        if self._body is None:
+        if not self.has("body"):
             raise ValueError(
                 "Steps builder has no body — call .body() or pass it to constructor"
             )
 
-        step_dicts = _resolve_step_builder(self._body)
+        step_dicts = _resolve_step_builder(self._state["body"])
 
-        return NestedStepsStep(steps=step_dicts, next=self._next)
+        return NestedStepsStep(steps=step_dicts, next=self._state.get("next"))

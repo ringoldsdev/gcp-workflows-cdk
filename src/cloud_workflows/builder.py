@@ -441,7 +441,7 @@ class StepBuilder:
                     builder.retry(**retry)
                 else:
                     # RetryConfig or string predicate — store directly
-                    builder._retry = retry  # noqa: SLF001
+                    builder._state["retry"] = retry  # noqa: SLF001
             if except_ is not None:
                 if isinstance(except_, dict):
                     builder.except_(**except_)
