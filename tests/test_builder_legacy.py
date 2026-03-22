@@ -1,4 +1,8 @@
-"""Tests for the WorkflowBuilder fluent API.
+"""Tests for the WorkflowBuilder fluent API (legacy patterns).
+
+These tests were originally written against the old WorkflowBuilder API
+where .step() was called directly on WorkflowBuilder. They have been
+adapted to the new StepBuilder + WorkflowBuilder architecture.
 
 Each test class builds a workflow using the builder and verifies:
 1. The correct workflow type is returned
@@ -9,7 +13,7 @@ Each test class builds a workflow using the builder and verifies:
 import pytest
 import yaml
 
-from cloud_workflows import WorkflowBuilder, analyze_workflow, expr
+from cloud_workflows import StepBuilder, WorkflowBuilder, analyze_workflow, expr
 from cloud_workflows.models import (
     AssignStep,
     BackoffConfig,
@@ -40,8 +44,12 @@ class TestSimpleAssignBuilder:
     def test_with_models(self):
         w = (
             WorkflowBuilder()
-            .step("init", AssignStep(assign=[{"x": 10}, {"y": 20}]))
-            .step("done", ReturnStep(return_="${x + y}"))
+            .workflow(
+                "main",
+                StepBuilder()
+                .step("init", AssignStep(assign=[{"x": 10}, {"y": 20}]))
+                .step("done", ReturnStep(return_="${x + y}")),
+            )
             .build()
         )
         assert isinstance(w, SimpleWorkflow)
@@ -51,8 +59,12 @@ class TestSimpleAssignBuilder:
     def test_with_dicts(self):
         w = (
             WorkflowBuilder()
-            .step("init", {"assign": [{"x": 10}, {"y": 20}]})
-            .step("done", {"return": "${x + y}"})
+            .workflow(
+                "main",
+                StepBuilder()
+                .step("init", {"assign": [{"x": 10}, {"y": 20}]})
+                .step("done", {"return": "${x + y}"}),
+            )
             .build()
         )
         assert isinstance(w, SimpleWorkflow)
@@ -62,14 +74,22 @@ class TestSimpleAssignBuilder:
     def test_models_and_dicts_match(self):
         w_models = (
             WorkflowBuilder()
-            .step("init", AssignStep(assign=[{"x": 10}, {"y": 20}]))
-            .step("done", ReturnStep(return_="${x + y}"))
+            .workflow(
+                "main",
+                StepBuilder()
+                .step("init", AssignStep(assign=[{"x": 10}, {"y": 20}]))
+                .step("done", ReturnStep(return_="${x + y}")),
+            )
             .build()
         )
         w_dicts = (
             WorkflowBuilder()
-            .step("init", {"assign": [{"x": 10}, {"y": 20}]})
-            .step("done", {"return": "${x + y}"})
+            .workflow(
+                "main",
+                StepBuilder()
+                .step("init", {"assign": [{"x": 10}, {"y": 20}]})
+                .step("done", {"return": "${x + y}"}),
+            )
             .build()
         )
         assert w_models.to_dict() == w_dicts.to_dict()
@@ -77,8 +97,12 @@ class TestSimpleAssignBuilder:
     def test_analyze(self):
         w = (
             WorkflowBuilder()
-            .step("init", AssignStep(assign=[{"x": 10}, {"y": 20}]))
-            .step("done", ReturnStep(return_="${x + y}"))
+            .workflow(
+                "main",
+                StepBuilder()
+                .step("init", AssignStep(assign=[{"x": 10}, {"y": 20}]))
+                .step("done", ReturnStep(return_="${x + y}")),
+            )
             .build()
         )
         result = analyze_workflow(w)
@@ -89,20 +113,26 @@ class TestSubworkflowsBuilder:
     """Build a subworkflows workflow using the builder."""
 
     def test_with_models(self):
-        w = (
-            WorkflowBuilder()
-            .workflow("main")
+        main = (
+            StepBuilder()
             .step(
                 "call_helper",
                 CallStep(call="helper", args={"input": "test"}, result="res"),
             )
             .step("done", ReturnStep(return_="${res}"))
-            .workflow("helper", params=["input"])
+        )
+        helper = (
+            StepBuilder()
             .step(
                 "log",
                 CallStep(call="sys.log", args={"text": "${input}"}),
             )
             .step("done", ReturnStep(return_="ok"))
+        )
+        w = (
+            WorkflowBuilder()
+            .workflow("main", main)
+            .workflow("helper", helper, params=["input"])
             .build()
         )
         assert isinstance(w, SubworkflowsWorkflow)
@@ -110,17 +140,23 @@ class TestSubworkflowsBuilder:
         assert w.to_dict() == expected
 
     def test_with_dicts(self):
-        w = (
-            WorkflowBuilder()
-            .workflow("main")
+        main = (
+            StepBuilder()
             .step(
                 "call_helper",
                 {"call": "helper", "args": {"input": "test"}, "result": "res"},
             )
             .step("done", {"return": "${res}"})
-            .workflow("helper", params=["input"])
+        )
+        helper = (
+            StepBuilder()
             .step("log", {"call": "sys.log", "args": {"text": "${input}"}})
             .step("done", {"return": "ok"})
+        )
+        w = (
+            WorkflowBuilder()
+            .workflow("main", main)
+            .workflow("helper", helper, params=["input"])
             .build()
         )
         assert isinstance(w, SubworkflowsWorkflow)
@@ -128,17 +164,23 @@ class TestSubworkflowsBuilder:
         assert w.to_dict() == expected
 
     def test_analyze(self):
-        w = (
-            WorkflowBuilder()
-            .workflow("main")
+        main = (
+            StepBuilder()
             .step(
                 "call_helper",
                 CallStep(call="helper", args={"input": "test"}, result="res"),
             )
             .step("done", ReturnStep(return_="${res}"))
-            .workflow("helper", params=["input"])
+        )
+        helper = (
+            StepBuilder()
             .step("log", CallStep(call="sys.log", args={"text": "${input}"}))
             .step("done", ReturnStep(return_="ok"))
+        )
+        w = (
+            WorkflowBuilder()
+            .workflow("main", main)
+            .workflow("helper", helper, params=["input"])
             .build()
         )
         result = analyze_workflow(w)
@@ -151,16 +193,24 @@ class TestForLoopBuilder:
     def test_with_models(self):
         w = (
             WorkflowBuilder()
-            .step(
-                "loop",
-                ForStep(
-                    for_=ForBody(
-                        value="item",
-                        in_=["a", "b", "c"],
-                        steps=[
-                            {"log": {"call": "sys.log", "args": {"text": "${item}"}}}
-                        ],
-                    )
+            .workflow(
+                "main",
+                StepBuilder().step(
+                    "loop",
+                    ForStep(
+                        for_=ForBody(
+                            value="item",
+                            in_=["a", "b", "c"],
+                            steps=[
+                                {
+                                    "log": {
+                                        "call": "sys.log",
+                                        "args": {"text": "${item}"},
+                                    }
+                                }
+                            ],
+                        )
+                    ),
                 ),
             )
             .build()
@@ -172,17 +222,25 @@ class TestForLoopBuilder:
     def test_with_dicts(self):
         w = (
             WorkflowBuilder()
-            .step(
-                "loop",
-                {
-                    "for": {
-                        "value": "item",
-                        "in": ["a", "b", "c"],
-                        "steps": [
-                            {"log": {"call": "sys.log", "args": {"text": "${item}"}}}
-                        ],
-                    }
-                },
+            .workflow(
+                "main",
+                StepBuilder().step(
+                    "loop",
+                    {
+                        "for": {
+                            "value": "item",
+                            "in": ["a", "b", "c"],
+                            "steps": [
+                                {
+                                    "log": {
+                                        "call": "sys.log",
+                                        "args": {"text": "${item}"},
+                                    }
+                                }
+                            ],
+                        }
+                    },
+                ),
             )
             .build()
         )
@@ -195,8 +253,8 @@ class TestSwitchBuilder:
     """Build a switch workflow using the builder."""
 
     def test_with_models(self):
-        w = (
-            WorkflowBuilder()
+        steps = (
+            StepBuilder()
             .step("init", AssignStep(assign=[{"x": 10}]))
             .step(
                 "check",
@@ -209,15 +267,15 @@ class TestSwitchBuilder:
             )
             .step("positive", ReturnStep(return_="positive"))
             .step("negative", ReturnStep(return_="negative"))
-            .build()
         )
+        w = WorkflowBuilder().workflow("main", steps).build()
         assert isinstance(w, SimpleWorkflow)
         expected = yaml.safe_load(load_fixture("cdk", "switch.yaml"))
         assert w.to_dict() == expected
 
     def test_with_dicts(self):
-        w = (
-            WorkflowBuilder()
+        steps = (
+            StepBuilder()
             .step("init", {"assign": [{"x": 10}]})
             .step(
                 "check",
@@ -230,8 +288,8 @@ class TestSwitchBuilder:
             )
             .step("positive", {"return": "positive"})
             .step("negative", {"return": "negative"})
-            .build()
         )
+        w = WorkflowBuilder().workflow("main", steps).build()
         assert isinstance(w, SimpleWorkflow)
         expected = yaml.safe_load(load_fixture("cdk", "switch.yaml"))
         assert w.to_dict() == expected
@@ -243,35 +301,38 @@ class TestParallelBranchesBuilder:
     def test_with_models(self):
         w = (
             WorkflowBuilder()
-            .step(
-                "parallel_work",
-                ParallelStep(
-                    parallel=ParallelBody(
-                        branches=[
-                            Branch(
-                                name="branch1",
-                                steps=[
-                                    {
-                                        "b1_step": {
-                                            "call": "sys.log",
-                                            "args": {"text": "branch1"},
+            .workflow(
+                "main",
+                StepBuilder().step(
+                    "parallel_work",
+                    ParallelStep(
+                        parallel=ParallelBody(
+                            branches=[
+                                Branch(
+                                    name="branch1",
+                                    steps=[
+                                        {
+                                            "b1_step": {
+                                                "call": "sys.log",
+                                                "args": {"text": "branch1"},
+                                            }
                                         }
-                                    }
-                                ],
-                            ),
-                            Branch(
-                                name="branch2",
-                                steps=[
-                                    {
-                                        "b2_step": {
-                                            "call": "sys.log",
-                                            "args": {"text": "branch2"},
+                                    ],
+                                ),
+                                Branch(
+                                    name="branch2",
+                                    steps=[
+                                        {
+                                            "b2_step": {
+                                                "call": "sys.log",
+                                                "args": {"text": "branch2"},
+                                            }
                                         }
-                                    }
-                                ],
-                            ),
-                        ]
-                    )
+                                    ],
+                                ),
+                            ]
+                        )
+                    ),
                 ),
             )
             .build()
@@ -283,38 +344,41 @@ class TestParallelBranchesBuilder:
     def test_with_dicts(self):
         w = (
             WorkflowBuilder()
-            .step(
-                "parallel_work",
-                {
-                    "parallel": {
-                        "branches": [
-                            {
-                                "branch1": {
-                                    "steps": [
-                                        {
-                                            "b1_step": {
-                                                "call": "sys.log",
-                                                "args": {"text": "branch1"},
+            .workflow(
+                "main",
+                StepBuilder().step(
+                    "parallel_work",
+                    {
+                        "parallel": {
+                            "branches": [
+                                {
+                                    "branch1": {
+                                        "steps": [
+                                            {
+                                                "b1_step": {
+                                                    "call": "sys.log",
+                                                    "args": {"text": "branch1"},
+                                                }
                                             }
-                                        }
-                                    ]
-                                }
-                            },
-                            {
-                                "branch2": {
-                                    "steps": [
-                                        {
-                                            "b2_step": {
-                                                "call": "sys.log",
-                                                "args": {"text": "branch2"},
+                                        ]
+                                    }
+                                },
+                                {
+                                    "branch2": {
+                                        "steps": [
+                                            {
+                                                "b2_step": {
+                                                    "call": "sys.log",
+                                                    "args": {"text": "branch2"},
+                                                }
                                             }
-                                        }
-                                    ]
-                                }
-                            },
-                        ]
-                    }
-                },
+                                        ]
+                                    }
+                                },
+                            ]
+                        }
+                    },
+                ),
             )
             .build()
         )
@@ -329,24 +393,27 @@ class TestTryExceptRetryBuilder:
     def test_with_models(self):
         w = (
             WorkflowBuilder()
-            .step(
-                "try_call",
-                TryStep(
-                    try_=TryCallBody(
-                        call="http.get",
-                        args={"url": "https://example.com"},
-                        result="response",
-                    ),
-                    retry=RetryConfig(
-                        predicate="${e.code == 429}",
-                        max_retries=3,
-                        backoff=BackoffConfig(
-                            initial_delay=1, max_delay=30, multiplier=2
+            .workflow(
+                "main",
+                StepBuilder().step(
+                    "try_call",
+                    TryStep(
+                        try_=TryCallBody(
+                            call="http.get",
+                            args={"url": "https://example.com"},
+                            result="response",
                         ),
-                    ),
-                    except_=ExceptBody(
-                        as_="e",
-                        steps=[{"handle": {"raise": "${e}"}}],
+                        retry=RetryConfig(
+                            predicate="${e.code == 429}",
+                            max_retries=3,
+                            backoff=BackoffConfig(
+                                initial_delay=1, max_delay=30, multiplier=2
+                            ),
+                        ),
+                        except_=ExceptBody(
+                            as_="e",
+                            steps=[{"handle": {"raise": "${e}"}}],
+                        ),
                     ),
                 ),
             )
@@ -359,28 +426,31 @@ class TestTryExceptRetryBuilder:
     def test_with_dicts(self):
         w = (
             WorkflowBuilder()
-            .step(
-                "try_call",
-                {
-                    "try": {
-                        "call": "http.get",
-                        "args": {"url": "https://example.com"},
-                        "result": "response",
-                    },
-                    "retry": {
-                        "predicate": "${e.code == 429}",
-                        "max_retries": 3,
-                        "backoff": {
-                            "initial_delay": 1,
-                            "max_delay": 30,
-                            "multiplier": 2,
+            .workflow(
+                "main",
+                StepBuilder().step(
+                    "try_call",
+                    {
+                        "try": {
+                            "call": "http.get",
+                            "args": {"url": "https://example.com"},
+                            "result": "response",
+                        },
+                        "retry": {
+                            "predicate": "${e.code == 429}",
+                            "max_retries": 3,
+                            "backoff": {
+                                "initial_delay": 1,
+                                "max_delay": 30,
+                                "multiplier": 2,
+                            },
+                        },
+                        "except": {
+                            "as": "e",
+                            "steps": [{"handle": {"raise": "${e}"}}],
                         },
                     },
-                    "except": {
-                        "as": "e",
-                        "steps": [{"handle": {"raise": "${e}"}}],
-                    },
-                },
+                ),
             )
             .build()
         )
@@ -393,8 +463,8 @@ class TestNestedStepsBuilder:
     """Build a nested steps workflow using the builder."""
 
     def test_with_models(self):
-        w = (
-            WorkflowBuilder()
+        steps = (
+            StepBuilder()
             .step(
                 "group",
                 NestedStepsStep(
@@ -406,15 +476,15 @@ class TestNestedStepsBuilder:
                 ),
             )
             .step("done", ReturnStep(return_="ok"))
-            .build()
         )
+        w = WorkflowBuilder().workflow("main", steps).build()
         assert isinstance(w, SimpleWorkflow)
         expected = yaml.safe_load(load_fixture("cdk", "nested_steps.yaml"))
         assert w.to_dict() == expected
 
     def test_with_dicts(self):
-        w = (
-            WorkflowBuilder()
+        steps = (
+            StepBuilder()
             .step(
                 "group",
                 {
@@ -426,8 +496,8 @@ class TestNestedStepsBuilder:
                 },
             )
             .step("done", {"return": "ok"})
-            .build()
         )
+        w = WorkflowBuilder().workflow("main", steps).build()
         assert isinstance(w, SimpleWorkflow)
         expected = yaml.safe_load(load_fixture("cdk", "nested_steps.yaml"))
         assert w.to_dict() == expected
@@ -437,34 +507,32 @@ class TestBuilderValidation:
     """Test builder error handling."""
 
     def test_build_empty_raises(self):
-        with pytest.raises(ValueError, match="No steps added"):
+        with pytest.raises(ValueError, match="No workflows defined"):
             WorkflowBuilder().build()
 
     def test_build_empty_workflow_raises(self):
         with pytest.raises(ValueError, match="has no steps"):
-            WorkflowBuilder().workflow("main").build()
+            WorkflowBuilder().workflow("main", StepBuilder()).build()
 
     def test_duplicate_workflow_name_raises(self):
         with pytest.raises(ValueError, match="Duplicate workflow name"):
             (
                 WorkflowBuilder()
-                .workflow("main")
-                .step("s1", {"assign": [{"x": 1}]})
-                .workflow("main")
+                .workflow("main", StepBuilder().step("s1", {"assign": [{"x": 1}]}))
+                .workflow("main", StepBuilder().step("s2", {"assign": [{"y": 2}]}))
             )
-
-    def test_step_then_workflow_raises(self):
-        with pytest.raises(ValueError, match="Cannot mix"):
-            (WorkflowBuilder().step("s1", {"assign": [{"x": 1}]}).workflow("main"))
 
     def test_invalid_step_body_raises(self):
         with pytest.raises(Exception):
-            WorkflowBuilder().step("bad", {"invalid_key": 42}).build()
+            WorkflowBuilder().workflow(
+                "main",
+                StepBuilder().step("bad", {"invalid_key": 42}),
+            ).build()
 
     def test_pydantic_validation_in_builder(self):
         """Pydantic validation runs eagerly at .step() time."""
         with pytest.raises(Exception):
-            WorkflowBuilder().step("bad", AssignStep(assign=[]))
+            StepBuilder().step("bad", AssignStep(assign=[]))
 
 
 class TestBuilderExprHelper:
@@ -473,8 +541,12 @@ class TestBuilderExprHelper:
     def test_expr_in_model(self):
         w = (
             WorkflowBuilder()
-            .step("init", AssignStep(assign=[{"x": 1}]))
-            .step("done", ReturnStep(return_=expr("x + 1")))
+            .workflow(
+                "main",
+                StepBuilder()
+                .step("init", AssignStep(assign=[{"x": 1}]))
+                .step("done", ReturnStep(return_=expr("x + 1"))),
+            )
             .build()
         )
         assert w.to_dict() == [
@@ -485,8 +557,12 @@ class TestBuilderExprHelper:
     def test_expr_in_dict(self):
         w = (
             WorkflowBuilder()
-            .step("init", {"assign": [{"x": 1}]})
-            .step("done", {"return": expr("x + 1")})
+            .workflow(
+                "main",
+                StepBuilder()
+                .step("init", {"assign": [{"x": 1}]})
+                .step("done", {"return": expr("x + 1")}),
+            )
             .build()
         )
         assert w.to_dict() == [
@@ -499,23 +575,27 @@ class TestBuilderChaining:
     """Test that chaining returns self correctly."""
 
     def test_step_returns_builder(self):
-        b = WorkflowBuilder()
+        b = StepBuilder()
         result = b.step("s1", {"assign": [{"x": 1}]})
         assert result is b
 
     def test_workflow_returns_builder(self):
         b = WorkflowBuilder()
-        result = b.workflow("main")
+        result = b.workflow("main", StepBuilder().step("s1", {"assign": [{"x": 1}]}))
         assert result is b
 
     def test_long_chain(self):
         w = (
             WorkflowBuilder()
-            .step("s1", {"assign": [{"a": 1}]})
-            .step("s2", {"assign": [{"b": 2}]})
-            .step("s3", {"assign": [{"c": 3}]})
-            .step("s4", {"assign": [{"d": 4}]})
-            .step("s5", {"return": "${a + b + c + d}"})
+            .workflow(
+                "main",
+                StepBuilder()
+                .step("s1", {"assign": [{"a": 1}]})
+                .step("s2", {"assign": [{"b": 2}]})
+                .step("s3", {"assign": [{"c": 3}]})
+                .step("s4", {"assign": [{"d": 4}]})
+                .step("s5", {"return": "${a + b + c + d}"}),
+            )
             .build()
         )
         assert isinstance(w, SimpleWorkflow)
@@ -528,8 +608,12 @@ class TestBuilderRoundTrip:
     def test_simple_round_trip(self):
         w1 = (
             WorkflowBuilder()
-            .step("init", {"assign": [{"x": 10}]})
-            .step("done", {"return": "${x}"})
+            .workflow(
+                "main",
+                StepBuilder()
+                .step("init", {"assign": [{"x": 10}]})
+                .step("done", {"return": "${x}"}),
+            )
             .build()
         )
         from cloud_workflows.models import parse_workflow
@@ -538,15 +622,13 @@ class TestBuilderRoundTrip:
         assert w1.to_dict() == w2.to_dict()
 
     def test_subworkflows_round_trip(self):
-        w1 = (
-            WorkflowBuilder()
-            .workflow("main")
+        main = (
+            StepBuilder()
             .step("s1", {"call": "helper", "result": "r"})
             .step("s2", {"return": "${r}"})
-            .workflow("helper")
-            .step("s1", {"return": "ok"})
-            .build()
         )
+        helper = StepBuilder().step("s1", {"return": "ok"})
+        w1 = WorkflowBuilder().workflow("main", main).workflow("helper", helper).build()
         from cloud_workflows.models import parse_workflow
 
         w2 = parse_workflow(w1.to_yaml())
@@ -559,9 +641,13 @@ class TestMixedConstruction:
     def test_mixed_models_and_dicts(self):
         w = (
             WorkflowBuilder()
-            .step("s1", AssignStep(assign=[{"x": 1}]))
-            .step("s2", {"call": "sys.log", "args": {"text": "${x}"}})
-            .step("s3", ReturnStep(return_="${x}"))
+            .workflow(
+                "main",
+                StepBuilder()
+                .step("s1", AssignStep(assign=[{"x": 1}]))
+                .step("s2", {"call": "sys.log", "args": {"text": "${x}"}})
+                .step("s3", ReturnStep(return_="${x}")),
+            )
             .build()
         )
         assert isinstance(w, SimpleWorkflow)

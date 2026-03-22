@@ -1,4 +1,4 @@
-"""Cloud Workflows YAML validator using Pydantic v2."""
+"""Cloud Workflows YAML validator and builder using Pydantic v2."""
 
 from .models import (
     parse_workflow,
@@ -29,8 +29,19 @@ from .models import (
     NestedStepsStep,
 )
 from .builder import (
+    StepBuilder,
     WorkflowBuilder,
-    StepBodyInput,
+)
+from .steps import (
+    Assign,
+    Call,
+    Return_,
+    Raise_,
+    Switch,
+    For,
+    Parallel,
+    Try_,
+    Steps,
 )
 from .parser import (
     validate_yaml,
@@ -61,9 +72,19 @@ __all__ = [
     "Workflow",
     "SimpleWorkflow",
     "SubworkflowsWorkflow",
-    # Builder
+    # Builders
+    "StepBuilder",
     "WorkflowBuilder",
-    "StepBodyInput",
+    # Step sub-builders
+    "Assign",
+    "Call",
+    "Return_",
+    "Raise_",
+    "Switch",
+    "For",
+    "Parallel",
+    "Try_",
+    "Steps",
     # Serialization
     "to_yaml",
     "expr",
@@ -82,7 +103,7 @@ __all__ = [
     "analyze_variables",
     "VariableIssue",
     "Severity",
-    # Model types (for programmatic construction)
+    # Model types (for direct construction / passthrough)
     "WorkflowDefinition",
     "Step",
     "AssignStep",
