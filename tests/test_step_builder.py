@@ -1,7 +1,7 @@
 """Tests for StepBuilder and step sub-builder classes.
 
 Tests are organized by:
-1. Each step type with all three input forms (kwargs, lambda, model passthrough)
+1. Each step type with all input forms (kwargs, lambda, model passthrough via .raw())
 2. Sub-builder .apply() for each step type
 3. StepBuilder.apply() for composing step sequences
 4. Error cases
@@ -70,23 +70,22 @@ def _to_dict(sb: StepBuilder) -> list:
 
 
 class TestAssignKwargs:
-    """Assign step via string type + kwargs."""
+    """Assign step via kwargs."""
 
     def test_simple_assign(self):
-        sb = StepBuilder().step("init", "assign", x=10, y=20)
+        sb = StepBuilder().assign("init", x=10, y=20)
         d = _to_dict(sb)
         assert d == [{"init": {"assign": [{"x": 10}, {"y": 20}]}}]
 
     def test_assign_with_expr(self):
-        sb = StepBuilder().step("init", "assign", x=10, y=expr("x + 1"))
+        sb = StepBuilder().assign("init", x=10, y=expr("x + 1"))
         d = _to_dict(sb)
         assert d == [{"init": {"assign": [{"x": 10}, {"y": "${x + 1}"}]}}]
 
     def test_assign_with_items_kwarg(self):
         """The 'items' kwarg passes a raw list of dicts for complex keys."""
-        sb = StepBuilder().step(
+        sb = StepBuilder().assign(
             "init",
-            "assign",
             items=[{"x": 10}, {'map["key"]': "value"}],
         )
         d = _to_dict(sb)
@@ -94,30 +93,27 @@ class TestAssignKwargs:
 
 
 class TestAssignLambda:
-    """Assign step via string type + lambda configurator."""
+    """Assign step via lambda configurator."""
 
     def test_lambda_set(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().assign(
             "init",
-            "assign",
             lambda a: a.set("x", 10).set("y", 20),
         )
         d = _to_dict(sb)
         assert d == [{"init": {"assign": [{"x": 10}, {"y": 20}]}}]
 
     def test_lambda_items(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().assign(
             "init",
-            "assign",
             lambda a: a.items([{"x": 10}, {"y": 20}]),
         )
         d = _to_dict(sb)
         assert d == [{"init": {"assign": [{"x": 10}, {"y": 20}]}}]
 
     def test_lambda_with_next(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().assign(
             "init",
-            "assign",
             lambda a: a.set("x", 10).next("done"),
         )
         d = _to_dict(sb)
@@ -125,24 +121,24 @@ class TestAssignLambda:
 
 
 class TestAssignPassthrough:
-    """Assign step via Pydantic model or dict passthrough."""
+    """Assign step via Pydantic model or dict passthrough (.raw())."""
 
     def test_pydantic_model(self):
-        sb = StepBuilder().step("init", AssignStep(assign=[{"x": 10}, {"y": 20}]))
+        sb = StepBuilder().raw("init", AssignStep(assign=[{"x": 10}, {"y": 20}]))
         d = _to_dict(sb)
         assert d == [{"init": {"assign": [{"x": 10}, {"y": 20}]}}]
 
     def test_dict_passthrough(self):
-        sb = StepBuilder().step("init", {"assign": [{"x": 10}, {"y": 20}]})
+        sb = StepBuilder().raw("init", {"assign": [{"x": 10}, {"y": 20}]})
         d = _to_dict(sb)
         assert d == [{"init": {"assign": [{"x": 10}, {"y": 20}]}}]
 
 
 class TestAssignSubBuilder:
-    """Assign sub-builder used directly."""
+    """Assign sub-builder used directly via .raw()."""
 
     def test_direct_sub_builder(self):
-        sb = StepBuilder().step("init", Assign().set("x", 10).set("y", 20))
+        sb = StepBuilder().raw("init", Assign().set("x", 10).set("y", 20))
         d = _to_dict(sb)
         assert d == [{"init": {"assign": [{"x": 10}, {"y": 20}]}}]
 
@@ -153,19 +149,17 @@ class TestAssignFixture:
     def test_simple_assign_fixture(self):
         sb = (
             StepBuilder()
-            .step("init", "assign", x=10, y=20)
-            .step("done", "return", value=expr("x + y"))
+            .assign("init", x=10, y=20)
+            .return_("done", value=expr("x + y"))
         )
         expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
         assert _to_dict(sb) == expected
 
     def test_all_three_forms_match(self):
         """kwargs, lambda, and model passthrough all produce the same output."""
-        sb_kwargs = StepBuilder().step("init", "assign", x=10, y=20)
-        sb_lambda = StepBuilder().step(
-            "init", "assign", lambda a: a.set("x", 10).set("y", 20)
-        )
-        sb_model = StepBuilder().step("init", AssignStep(assign=[{"x": 10}, {"y": 20}]))
+        sb_kwargs = StepBuilder().assign("init", x=10, y=20)
+        sb_lambda = StepBuilder().assign("init", lambda a: a.set("x", 10).set("y", 20))
+        sb_model = StepBuilder().raw("init", AssignStep(assign=[{"x": 10}, {"y": 20}]))
         assert _to_dict(sb_kwargs) == _to_dict(sb_lambda) == _to_dict(sb_model)
 
 
@@ -175,17 +169,16 @@ class TestAssignFixture:
 
 
 class TestCallKwargs:
-    """Call step via string type + kwargs."""
+    """Call step via kwargs."""
 
     def test_simple_call(self):
-        sb = StepBuilder().step("log", "call", func="sys.log", args={"text": "hello"})
+        sb = StepBuilder().call("log", func="sys.log", args={"text": "hello"})
         d = _to_dict(sb)
         assert d == [{"log": {"call": "sys.log", "args": {"text": "hello"}}}]
 
     def test_call_with_result(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().call(
             "fetch",
-            "call",
             func="http.get",
             args={"url": "https://example.com"},
             result="resp",
@@ -202,9 +195,8 @@ class TestCallKwargs:
         ]
 
     def test_call_with_next(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().call(
             "log",
-            "call",
             func="sys.log",
             args={"text": "hello"},
             next="done",
@@ -216,21 +208,19 @@ class TestCallKwargs:
 
 
 class TestCallLambda:
-    """Call step via string type + lambda configurator."""
+    """Call step via lambda configurator."""
 
     def test_lambda_call(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().call(
             "log",
-            "call",
             lambda c: c.func("sys.log").args(text="hello"),
         )
         d = _to_dict(sb)
         assert d == [{"log": {"call": "sys.log", "args": {"text": "hello"}}}]
 
     def test_lambda_call_with_result(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().call(
             "fetch",
-            "call",
             lambda c: c.func("http.get").args(url="https://example.com").result("resp"),
         )
         d = _to_dict(sb)
@@ -246,19 +236,19 @@ class TestCallLambda:
 
 
 class TestCallSubBuilder:
-    """Call sub-builder used directly."""
+    """Call sub-builder used directly via .raw()."""
 
     def test_direct_sub_builder(self):
-        sb = StepBuilder().step("log", Call("sys.log").args(text="hello"))
+        sb = StepBuilder().raw("log", Call("sys.log").args(text="hello"))
         d = _to_dict(sb)
         assert d == [{"log": {"call": "sys.log", "args": {"text": "hello"}}}]
 
 
 class TestCallPassthrough:
-    """Call step via Pydantic model passthrough."""
+    """Call step via Pydantic model passthrough (.raw())."""
 
     def test_pydantic_model(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().raw(
             "log",
             CallStep(call="sys.log", args={"text": "hello"}),
         )
@@ -272,42 +262,42 @@ class TestCallPassthrough:
 
 
 class TestReturnKwargs:
-    """Return step via string type + kwargs."""
+    """Return step via kwargs."""
 
     def test_return_value(self):
-        sb = StepBuilder().step("done", "return", value="ok")
+        sb = StepBuilder().return_("done", value="ok")
         d = _to_dict(sb)
         assert d == [{"done": {"return": "ok"}}]
 
     def test_return_expr(self):
-        sb = StepBuilder().step("done", "return", value=expr("x + y"))
+        sb = StepBuilder().return_("done", value=expr("x + y"))
         d = _to_dict(sb)
         assert d == [{"done": {"return": "${x + y}"}}]
 
 
 class TestReturnLambda:
-    """Return step via string type + lambda configurator."""
+    """Return step via lambda configurator."""
 
     def test_lambda_return(self):
-        sb = StepBuilder().step("done", "return", lambda r: r.value("ok"))
+        sb = StepBuilder().return_("done", lambda r: r.value("ok"))
         d = _to_dict(sb)
         assert d == [{"done": {"return": "ok"}}]
 
 
 class TestReturnSubBuilder:
-    """Return sub-builder used directly."""
+    """Return sub-builder used directly via .raw()."""
 
     def test_direct_sub_builder(self):
-        sb = StepBuilder().step("done", Return_(expr("x + y")))
+        sb = StepBuilder().raw("done", Return_(expr("x + y")))
         d = _to_dict(sb)
         assert d == [{"done": {"return": "${x + y}"}}]
 
 
 class TestReturnPassthrough:
-    """Return step via Pydantic model passthrough."""
+    """Return step via Pydantic model passthrough (.raw())."""
 
     def test_pydantic_model(self):
-        sb = StepBuilder().step("done", ReturnStep(return_="ok"))
+        sb = StepBuilder().raw("done", ReturnStep(return_="ok"))
         d = _to_dict(sb)
         assert d == [{"done": {"return": "ok"}}]
 
@@ -318,35 +308,33 @@ class TestReturnPassthrough:
 
 
 class TestRaiseKwargs:
-    """Raise step via string type + kwargs."""
+    """Raise step via kwargs."""
 
     def test_raise_string(self):
-        sb = StepBuilder().step("fail", "raise", value="something went wrong")
+        sb = StepBuilder().raise_("fail", value="something went wrong")
         d = _to_dict(sb)
         assert d == [{"fail": {"raise": "something went wrong"}}]
 
     def test_raise_dict(self):
-        sb = StepBuilder().step(
-            "fail", "raise", value={"code": 404, "message": "not found"}
-        )
+        sb = StepBuilder().raise_("fail", value={"code": 404, "message": "not found"})
         d = _to_dict(sb)
         assert d == [{"fail": {"raise": {"code": 404, "message": "not found"}}}]
 
 
 class TestRaiseLambda:
-    """Raise step via string type + lambda configurator."""
+    """Raise step via lambda configurator."""
 
     def test_lambda_raise(self):
-        sb = StepBuilder().step("fail", "raise", lambda r: r.value(expr("e")))
+        sb = StepBuilder().raise_("fail", lambda r: r.value(expr("e")))
         d = _to_dict(sb)
         assert d == [{"fail": {"raise": "${e}"}}]
 
 
 class TestRaiseSubBuilder:
-    """Raise sub-builder used directly."""
+    """Raise sub-builder used directly via .raw()."""
 
     def test_direct_sub_builder(self):
-        sb = StepBuilder().step("fail", Raise_({"code": 404}))
+        sb = StepBuilder().raw("fail", Raise_({"code": 404}))
         d = _to_dict(sb)
         assert d == [{"fail": {"raise": {"code": 404}}}]
 
@@ -357,12 +345,11 @@ class TestRaiseSubBuilder:
 
 
 class TestSwitchKwargs:
-    """Switch step via string type + kwargs."""
+    """Switch step via kwargs."""
 
     def test_switch_conditions(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().switch(
             "check",
-            "switch",
             conditions=[
                 {"condition": expr("x > 0"), "next": "positive"},
                 {"condition": True, "next": "negative"},
@@ -382,12 +369,11 @@ class TestSwitchKwargs:
 
 
 class TestSwitchLambda:
-    """Switch step via string type + lambda configurator."""
+    """Switch step via lambda configurator."""
 
     def test_lambda_switch(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().switch(
             "check",
-            "switch",
             lambda s: (
                 s.condition(expr("x > 0"), next="positive").condition(
                     True, next="negative"
@@ -407,9 +393,8 @@ class TestSwitchLambda:
         ]
 
     def test_lambda_switch_with_next(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().switch(
             "check",
-            "switch",
             lambda s: (s.condition(expr("x > 0"), next="positive").next("fallback")),
         )
         d = _to_dict(sb)
@@ -426,10 +411,10 @@ class TestSwitchLambda:
 
 
 class TestSwitchSubBuilder:
-    """Switch sub-builder used directly."""
+    """Switch sub-builder used directly via .raw()."""
 
     def test_direct_sub_builder(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().raw(
             "check",
             Switch()
             .condition(expr("x > 0"), next="positive")
@@ -454,18 +439,17 @@ class TestSwitchFixture:
     def test_switch_fixture(self):
         sb = (
             StepBuilder()
-            .step("init", "assign", x=10)
-            .step(
+            .assign("init", x=10)
+            .switch(
                 "check",
-                "switch",
                 lambda s: (
                     s.condition(expr("x > 0"), next="positive").condition(
                         True, next="negative"
                     )
                 ),
             )
-            .step("positive", "return", value="positive")
-            .step("negative", "return", value="negative")
+            .return_("positive", value="positive")
+            .return_("negative", value="negative")
         )
         expected = yaml.safe_load(load_fixture("cdk", "switch.yaml"))
         assert _to_dict(sb) == expected
@@ -477,15 +461,12 @@ class TestSwitchFixture:
 
 
 class TestForKwargs:
-    """For step via string type + kwargs."""
+    """For step via kwargs."""
 
     def test_for_in(self):
-        inner = StepBuilder().step(
-            "log", "call", func="sys.log", args={"text": expr("item")}
-        )
-        sb = StepBuilder().step(
+        inner = StepBuilder().call("log", func="sys.log", args={"text": expr("item")})
+        sb = StepBuilder().for_(
             "loop",
-            "for",
             value="item",
             in_=["a", "b", "c"],
             steps=inner,
@@ -507,15 +488,12 @@ class TestForKwargs:
 
 
 class TestForLambda:
-    """For step via string type + lambda configurator."""
+    """For step via lambda configurator."""
 
     def test_lambda_for(self):
-        inner = StepBuilder().step(
-            "log", "call", func="sys.log", args={"text": expr("item")}
-        )
-        sb = StepBuilder().step(
+        inner = StepBuilder().call("log", func="sys.log", args={"text": expr("item")})
+        sb = StepBuilder().for_(
             "loop",
-            "for",
             lambda f: f.in_(["a", "b", "c"]).steps(inner),
             value="item",
         )
@@ -536,13 +514,11 @@ class TestForLambda:
 
 
 class TestForSubBuilder:
-    """For sub-builder used directly."""
+    """For sub-builder used directly via .raw()."""
 
     def test_direct_sub_builder(self):
-        inner = StepBuilder().step(
-            "log", "call", func="sys.log", args={"text": expr("item")}
-        )
-        sb = StepBuilder().step(
+        inner = StepBuilder().call("log", func="sys.log", args={"text": expr("item")})
+        sb = StepBuilder().raw(
             "loop",
             For("item").in_(["a", "b", "c"]).steps(inner),
         )
@@ -562,10 +538,8 @@ class TestForSubBuilder:
         ]
 
     def test_for_with_range(self):
-        inner = StepBuilder().step(
-            "log", "call", func="sys.log", args={"text": expr("item")}
-        )
-        sb = StepBuilder().step(
+        inner = StepBuilder().call("log", func="sys.log", args={"text": expr("item")})
+        sb = StepBuilder().raw(
             "loop",
             For("item").range_([1, 10, 2]).steps(inner),
         )
@@ -585,10 +559,8 @@ class TestForSubBuilder:
         ]
 
     def test_for_with_index(self):
-        inner = StepBuilder().step(
-            "log", "call", func="sys.log", args={"text": expr("item")}
-        )
-        sb = StepBuilder().step(
+        inner = StepBuilder().call("log", func="sys.log", args={"text": expr("item")})
+        sb = StepBuilder().raw(
             "loop",
             For("item").in_(["a", "b"]).index("idx").steps(inner),
         )
@@ -613,12 +585,9 @@ class TestForFixture:
     """For step matches YAML fixture."""
 
     def test_for_loop_fixture(self):
-        inner = StepBuilder().step(
-            "log", "call", func="sys.log", args={"text": expr("item")}
-        )
-        sb = StepBuilder().step(
+        inner = StepBuilder().call("log", func="sys.log", args={"text": expr("item")})
+        sb = StepBuilder().for_(
             "loop",
-            "for",
             value="item",
             in_=["a", "b", "c"],
             steps=inner,
@@ -633,18 +602,13 @@ class TestForFixture:
 
 
 class TestParallelKwargs:
-    """Parallel step via string type + kwargs."""
+    """Parallel step via kwargs."""
 
     def test_parallel_branches(self):
-        b1 = StepBuilder().step(
-            "b1_step", "call", func="sys.log", args={"text": "branch1"}
-        )
-        b2 = StepBuilder().step(
-            "b2_step", "call", func="sys.log", args={"text": "branch2"}
-        )
-        sb = StepBuilder().step(
+        b1 = StepBuilder().call("b1_step", func="sys.log", args={"text": "branch1"})
+        b2 = StepBuilder().call("b2_step", func="sys.log", args={"text": "branch2"})
+        sb = StepBuilder().parallel(
             "parallel_work",
-            "parallel",
             branches={"branch1": b1, "branch2": b2},
         )
         d = _to_dict(sb)
@@ -653,18 +617,13 @@ class TestParallelKwargs:
 
 
 class TestParallelLambda:
-    """Parallel step via string type + lambda configurator."""
+    """Parallel step via lambda configurator."""
 
     def test_lambda_parallel(self):
-        b1 = StepBuilder().step(
-            "b1_step", "call", func="sys.log", args={"text": "branch1"}
-        )
-        b2 = StepBuilder().step(
-            "b2_step", "call", func="sys.log", args={"text": "branch2"}
-        )
-        sb = StepBuilder().step(
+        b1 = StepBuilder().call("b1_step", func="sys.log", args={"text": "branch1"})
+        b2 = StepBuilder().call("b2_step", func="sys.log", args={"text": "branch2"})
+        sb = StepBuilder().parallel(
             "parallel_work",
-            "parallel",
             lambda p: p.branch("branch1", b1).branch("branch2", b2),
         )
         d = _to_dict(sb)
@@ -672,11 +631,10 @@ class TestParallelLambda:
         assert d == expected
 
     def test_lambda_parallel_with_shared(self):
-        b1 = StepBuilder().step("b1_step", "assign", result=1)
-        b2 = StepBuilder().step("b2_step", "assign", result=2)
-        sb = StepBuilder().step(
+        b1 = StepBuilder().assign("b1_step", result=1)
+        b2 = StepBuilder().assign("b2_step", result=2)
+        sb = StepBuilder().parallel(
             "work",
-            "parallel",
             lambda p: (p.branch("b1", b1).branch("b2", b2).shared(["result"])),
         )
         d = _to_dict(sb)
@@ -684,16 +642,12 @@ class TestParallelLambda:
 
 
 class TestParallelSubBuilder:
-    """Parallel sub-builder used directly."""
+    """Parallel sub-builder used directly via .raw()."""
 
     def test_direct_sub_builder(self):
-        b1 = StepBuilder().step(
-            "b1_step", "call", func="sys.log", args={"text": "branch1"}
-        )
-        b2 = StepBuilder().step(
-            "b2_step", "call", func="sys.log", args={"text": "branch2"}
-        )
-        sb = StepBuilder().step(
+        b1 = StepBuilder().call("b1_step", func="sys.log", args={"text": "branch1"})
+        b2 = StepBuilder().call("b2_step", func="sys.log", args={"text": "branch2"})
+        sb = StepBuilder().raw(
             "parallel_work",
             Parallel().branch("branch1", b1).branch("branch2", b2),
         )
@@ -708,20 +662,18 @@ class TestParallelSubBuilder:
 
 
 class TestTryKwargs:
-    """Try step via string type + kwargs."""
+    """Try step via kwargs."""
 
     def test_try_call_with_retry_and_except(self):
-        body = StepBuilder().step(
-            "call",
+        body = StepBuilder().call(
             "call",
             func="http.get",
             args={"url": "https://example.com"},
             result="response",
         )
-        except_steps = StepBuilder().step("handle", "raise", value=expr("e"))
-        sb = StepBuilder().step(
+        except_steps = StepBuilder().raise_("handle", value=expr("e"))
+        sb = StepBuilder().try_(
             "try_call",
-            "try",
             body=body,
             retry={
                 "predicate": expr("e.code == 429"),
@@ -740,20 +692,18 @@ class TestTryKwargs:
 
 
 class TestTryLambda:
-    """Try step via string type + lambda configurator."""
+    """Try step via lambda configurator."""
 
     def test_lambda_try(self):
-        body = StepBuilder().step(
-            "call",
+        body = StepBuilder().call(
             "call",
             func="http.get",
             args={"url": "https://example.com"},
             result="response",
         )
-        except_steps = StepBuilder().step("handle", "raise", value=expr("e"))
-        sb = StepBuilder().step(
+        except_steps = StepBuilder().raise_("handle", value=expr("e"))
+        sb = StepBuilder().try_(
             "try_call",
-            "try",
             lambda t: (
                 t.body(body)
                 .retry(
@@ -770,18 +720,17 @@ class TestTryLambda:
 
 
 class TestTrySubBuilder:
-    """Try sub-builder used directly."""
+    """Try sub-builder used directly via .raw()."""
 
     def test_direct_sub_builder(self):
-        body = StepBuilder().step(
-            "call",
+        body = StepBuilder().call(
             "call",
             func="http.get",
             args={"url": "https://example.com"},
             result="response",
         )
-        except_steps = StepBuilder().step("handle", "raise", value=expr("e"))
-        sb = StepBuilder().step(
+        except_steps = StepBuilder().raise_("handle", value=expr("e"))
+        sb = StepBuilder().raw(
             "try_call",
             Try_(body)
             .retry(
@@ -802,18 +751,18 @@ class TestTrySubBuilder:
 
 
 class TestNestedStepsKwargs:
-    """Nested steps via string type + kwargs."""
+    """Nested steps via kwargs."""
 
     def test_nested_steps(self):
         inner = (
             StepBuilder()
-            .step("step_a", "call", func="sys.log", args={"text": "a"})
-            .step("step_b", "call", func="sys.log", args={"text": "b"})
+            .call("step_a", func="sys.log", args={"text": "a"})
+            .call("step_b", func="sys.log", args={"text": "b"})
         )
         sb = (
             StepBuilder()
-            .step("group", "steps", body=inner, next="done")
-            .step("done", "return", value="ok")
+            .nested_steps("group", body=inner, next="done")
+            .return_("done", value="ok")
         )
         d = _to_dict(sb)
         expected = yaml.safe_load(load_fixture("cdk", "nested_steps.yaml"))
@@ -821,18 +770,18 @@ class TestNestedStepsKwargs:
 
 
 class TestNestedStepsLambda:
-    """Nested steps via string type + lambda configurator."""
+    """Nested steps via lambda configurator."""
 
     def test_lambda_nested_steps(self):
         inner = (
             StepBuilder()
-            .step("step_a", "call", func="sys.log", args={"text": "a"})
-            .step("step_b", "call", func="sys.log", args={"text": "b"})
+            .call("step_a", func="sys.log", args={"text": "a"})
+            .call("step_b", func="sys.log", args={"text": "b"})
         )
         sb = (
             StepBuilder()
-            .step("group", "steps", lambda s: s.body(inner).next("done"))
-            .step("done", "return", value="ok")
+            .nested_steps("group", lambda s: s.body(inner).next("done"))
+            .return_("done", value="ok")
         )
         d = _to_dict(sb)
         expected = yaml.safe_load(load_fixture("cdk", "nested_steps.yaml"))
@@ -840,18 +789,18 @@ class TestNestedStepsLambda:
 
 
 class TestNestedStepsSubBuilder:
-    """Nested steps sub-builder used directly."""
+    """Nested steps sub-builder used directly via .raw()."""
 
     def test_direct_sub_builder(self):
         inner = (
             StepBuilder()
-            .step("step_a", "call", func="sys.log", args={"text": "a"})
-            .step("step_b", "call", func="sys.log", args={"text": "b"})
+            .call("step_a", func="sys.log", args={"text": "a"})
+            .call("step_b", func="sys.log", args={"text": "b"})
         )
         sb = (
             StepBuilder()
-            .step("group", Steps(inner).next("done"))
-            .step("done", "return", value="ok")
+            .raw("group", Steps(inner).next("done"))
+            .return_("done", value="ok")
         )
         d = _to_dict(sb)
         expected = yaml.safe_load(load_fixture("cdk", "nested_steps.yaml"))
@@ -868,9 +817,8 @@ class TestAssignApply:
 
     def test_apply_assign_builder(self):
         common = Assign().set("content_type", "application/json")
-        sb = StepBuilder().step(
+        sb = StepBuilder().assign(
             "init",
-            "assign",
             lambda a: a.set("url", "https://api.example.com").apply(common),
         )
         d = _to_dict(sb)
@@ -886,18 +834,16 @@ class TestAssignApply:
         ]
 
     def test_apply_callable_returns_builder(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().assign(
             "init",
-            "assign",
             lambda a: a.set("x", 10).apply(lambda: Assign().set("debug", True)),
         )
         d = _to_dict(sb)
         assert d == [{"init": {"assign": [{"x": 10}, {"debug": True}]}}]
 
     def test_apply_callable_returns_none(self):
-        sb = StepBuilder().step(
+        sb = StepBuilder().assign(
             "init",
-            "assign",
             lambda a: a.set("x", 10).apply(lambda: None),
         )
         d = _to_dict(sb)
@@ -909,9 +855,8 @@ class TestCallApply:
 
     def test_apply_overwrites_args(self):
         auth = Call("").args(authorization="Bearer token123")
-        sb = StepBuilder().step(
+        sb = StepBuilder().call(
             "fetch",
-            "call",
             lambda c: c.func("http.get").args(url="https://example.com").apply(auth),
         )
         d = _to_dict(sb)
@@ -922,9 +867,8 @@ class TestCallApply:
     def test_apply_only_overwrites_set_fields(self):
         """Apply a Call that only sets result — func and args should remain."""
         partial = Call("").result("response")
-        sb = StepBuilder().step(
+        sb = StepBuilder().call(
             "fetch",
-            "call",
             lambda c: c.func("http.get").args(url="https://example.com").apply(partial),
         )
         d = _to_dict(sb)
@@ -938,9 +882,8 @@ class TestSwitchApply:
 
     def test_apply_appends_conditions(self):
         fallback = Switch().condition(True, next="default")
-        sb = StepBuilder().step(
+        sb = StepBuilder().switch(
             "check",
-            "switch",
             lambda s: (s.condition(expr("x > 0"), next="positive").apply(fallback)),
         )
         d = _to_dict(sb)
@@ -961,9 +904,7 @@ class TestTryApply:
 
     def test_apply_retry_config(self):
         """Reusable retry config applied to a Try_ builder."""
-        default_retry = Try_.__new__(Try_)
-        # Can't easily create a partial Try_ without body, so use lambda pattern
-        body = StepBuilder().step("call", "call", func="http.get", args={"url": "..."})
+        body = StepBuilder().call("call", func="http.get", args={"url": "..."})
 
         def add_retry(t):
             return t.retry(
@@ -972,9 +913,8 @@ class TestTryApply:
                 backoff={"initial_delay": 1, "max_delay": 30, "multiplier": 2},
             )
 
-        sb = StepBuilder().step(
+        sb = StepBuilder().try_(
             "safe",
-            "try",
             lambda t: add_retry(t.body(body)),
         )
         d = _to_dict(sb)
@@ -987,19 +927,12 @@ class TestParallelApply:
     def test_apply_appends_branches(self):
         extra = Parallel().branch(
             "branch3",
-            StepBuilder().step(
-                "b3_step", "call", func="sys.log", args={"text": "branch3"}
-            ),
+            StepBuilder().call("b3_step", func="sys.log", args={"text": "branch3"}),
         )
-        b1 = StepBuilder().step(
-            "b1_step", "call", func="sys.log", args={"text": "branch1"}
-        )
-        b2 = StepBuilder().step(
-            "b2_step", "call", func="sys.log", args={"text": "branch2"}
-        )
-        sb = StepBuilder().step(
+        b1 = StepBuilder().call("b1_step", func="sys.log", args={"text": "branch1"})
+        b2 = StepBuilder().call("b2_step", func="sys.log", args={"text": "branch2"})
+        sb = StepBuilder().parallel(
             "work",
-            "parallel",
             lambda p: p.branch("branch1", b1).branch("branch2", b2).apply(extra),
         )
         d = _to_dict(sb)
@@ -1017,8 +950,8 @@ class TestStepBuilderApply:
     """StepBuilder.apply() merges step sequences."""
 
     def test_apply_step_builder(self):
-        setup = StepBuilder().step("init", "assign", x=0)
-        main = StepBuilder().apply(setup).step("done", "return", value=expr("x"))
+        setup = StepBuilder().assign("init", x=0)
+        main = StepBuilder().apply(setup).return_("done", value=expr("x"))
         d = _to_dict(main)
         assert d == [
             {"init": {"assign": [{"x": 0}]}},
@@ -1026,10 +959,8 @@ class TestStepBuilderApply:
         ]
 
     def test_apply_callable_returns_builder(self):
-        setup = StepBuilder().step("init", "assign", x=0)
-        main = (
-            StepBuilder().apply(lambda: setup).step("done", "return", value=expr("x"))
-        )
+        setup = StepBuilder().assign("init", x=0)
+        main = StepBuilder().apply(lambda: setup).return_("done", value=expr("x"))
         d = _to_dict(main)
         assert d == [
             {"init": {"assign": [{"x": 0}]}},
@@ -1037,18 +968,18 @@ class TestStepBuilderApply:
         ]
 
     def test_apply_callable_returns_none(self):
-        main = StepBuilder().apply(lambda: None).step("done", "return", value="ok")
+        main = StepBuilder().apply(lambda: None).return_("done", value="ok")
         d = _to_dict(main)
         assert d == [{"done": {"return": "ok"}}]
 
     def test_apply_multiple_builders(self):
-        setup = StepBuilder().step("s1", "assign", x=1)
-        middle = StepBuilder().step("s2", "assign", y=2)
+        setup = StepBuilder().assign("s1", x=1)
+        middle = StepBuilder().assign("s2", y=2)
         main = (
             StepBuilder()
             .apply(setup)
             .apply(middle)
-            .step("done", "return", value=expr("x + y"))
+            .return_("done", value=expr("x + y"))
         )
         d = _to_dict(main)
         assert len(d) == 3
@@ -1059,15 +990,13 @@ class TestStepBuilderApply:
         """Compose reusable step sequences into workflows."""
 
         def logging_steps(message: str) -> StepBuilder:
-            return StepBuilder().step(
-                "log", "call", func="sys.log", args={"text": message}
-            )
+            return StepBuilder().call("log", func="sys.log", args={"text": message})
 
         main = (
             StepBuilder()
-            .step("init", "assign", status="starting")
+            .assign("init", status="starting")
             .apply(logging_steps("workflow started"))
-            .step("done", "return", value="ok")
+            .return_("done", value="ok")
         )
         d = _to_dict(main)
         assert len(d) == 3
@@ -1087,11 +1016,9 @@ class TestMixedConstruction:
     def test_mixed_forms(self):
         sb = (
             StepBuilder()
-            .step("s1", "assign", x=10)  # kwargs
-            .step(
-                "s2", "call", lambda c: c.func("sys.log").args(text=expr("x"))
-            )  # lambda
-            .step("s3", ReturnStep(return_=expr("x")))  # model passthrough
+            .assign("s1", x=10)  # kwargs
+            .call("s2", lambda c: c.func("sys.log").args(text=expr("x")))  # lambda
+            .raw("s3", ReturnStep(return_=expr("x")))  # model passthrough
         )
         d = _to_dict(sb)
         assert d[0] == {"s1": {"assign": [{"x": 10}]}}
@@ -1103,7 +1030,7 @@ class TestStepBuilderBuild:
     """Test StepBuilder.build() returns a list of Step objects."""
 
     def test_build_returns_list(self):
-        sb = StepBuilder().step("s1", "assign", x=1).step("s2", "return", value="ok")
+        sb = StepBuilder().assign("s1", x=1).return_("s2", value="ok")
         steps = sb.build()
         assert isinstance(steps, list)
         assert len(steps) == 2
@@ -1125,8 +1052,8 @@ class TestStepBuilderValidation:
     def test_simple_assign_validates(self):
         sb = (
             StepBuilder()
-            .step("init", "assign", x=10, y=20)
-            .step("done", "return", value=expr("x + y"))
+            .assign("init", x=10, y=20)
+            .return_("done", value=expr("x + y"))
         )
         w = WorkflowBuilder().workflow("main", sb).build()
         result = analyze_workflow(w)
@@ -1135,19 +1062,18 @@ class TestStepBuilderValidation:
     def test_subworkflows_validate(self):
         main = (
             StepBuilder()
-            .step(
+            .call(
                 "call_helper",
-                "call",
                 func="helper",
                 args={"input": "test"},
                 result="res",
             )
-            .step("done", "return", value=expr("res"))
+            .return_("done", value=expr("res"))
         )
         helper = (
             StepBuilder()
-            .step("log", "call", func="sys.log", args={"text": expr("input")})
-            .step("done", "return", value="ok")
+            .call("log", func="sys.log", args={"text": expr("input")})
+            .return_("done", value="ok")
         )
         w = (
             WorkflowBuilder()
@@ -1167,29 +1093,25 @@ class TestStepBuilderValidation:
 class TestStepBuilderErrors:
     """Error handling for StepBuilder."""
 
-    def test_unknown_step_type_raises(self):
-        with pytest.raises(ValueError, match="Unknown step type"):
-            StepBuilder().step("bad", "nonexistent")
-
     def test_assign_no_items_raises(self):
         """Assign with no kwargs and no lambda should raise."""
         with pytest.raises(ValueError):
-            StepBuilder().step("bad", "assign")
+            StepBuilder().assign("bad")
 
     def test_call_no_func_raises(self):
         """Call with no func kwarg and no lambda should raise."""
         with pytest.raises(ValueError):
-            StepBuilder().step("bad", "call")
+            StepBuilder().call("bad")
 
     def test_return_no_value_raises(self):
         """Return with no value kwarg and no lambda should raise."""
         with pytest.raises(ValueError):
-            StepBuilder().step("bad", "return")
+            StepBuilder().return_("bad")
 
     def test_raise_no_value_raises(self):
         """Raise with no value kwarg and no lambda should raise."""
         with pytest.raises(ValueError):
-            StepBuilder().step("bad", "raise")
+            StepBuilder().raise_("bad")
 
 
 class TestSubBuilderTypeErrors:

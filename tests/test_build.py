@@ -28,8 +28,8 @@ class TestBuildWritesFiles:
     def test_single_workflow(self, tmp_path):
         steps = (
             StepBuilder()
-            .step("init", "assign", x=10, y=20)
-            .step("done", "return", value=expr("x + y"))
+            .assign("init", x=10, y=20)
+            .return_("done", value=expr("x + y"))
         )
         w = WorkflowBuilder().workflow("main", steps).build()
 
@@ -46,19 +46,18 @@ class TestBuildWritesFiles:
     def test_multiple_workflows(self, tmp_path):
         main = (
             StepBuilder()
-            .step(
+            .call(
                 "call_helper",
-                "call",
                 func="helper",
                 args={"input": "test"},
                 result="res",
             )
-            .step("done", "return", value=expr("res"))
+            .return_("done", value=expr("res"))
         )
         helper = (
             StepBuilder()
-            .step("log", "call", func="sys.log", args={"text": expr("input")})
-            .step("done", "return", value="ok")
+            .call("log", func="sys.log", args={"text": expr("input")})
+            .return_("done", value="ok")
         )
         multi = (
             WorkflowBuilder()
@@ -67,7 +66,7 @@ class TestBuildWritesFiles:
             .build()
         )
 
-        second_steps = StepBuilder().step("done", "return", value="ok")
+        second_steps = StepBuilder().return_("done", value="ok")
         second = WorkflowBuilder().workflow("main", second_steps).build()
 
         written = build(
@@ -87,7 +86,7 @@ class TestBuildWritesFiles:
         assert actual_second == expected_second
 
     def test_returns_path_objects(self, tmp_path):
-        steps = StepBuilder().step("done", "return", value="ok")
+        steps = StepBuilder().return_("done", value="ok")
         w = WorkflowBuilder().workflow("main", steps).build()
 
         written = build([("out.yaml", w)], output_dir=tmp_path)
@@ -108,7 +107,7 @@ class TestBuildOutputDir:
         nested = tmp_path / "a" / "b" / "c"
         assert not nested.exists()
 
-        steps = StepBuilder().step("done", "return", value="ok")
+        steps = StepBuilder().return_("done", value="ok")
         w = WorkflowBuilder().workflow("main", steps).build()
 
         build([("out.yaml", w)], output_dir=nested)
@@ -118,7 +117,7 @@ class TestBuildOutputDir:
 
     def test_creates_subdirectory_in_filename(self, tmp_path):
         """Filenames with path separators create subdirectories."""
-        steps = StepBuilder().step("done", "return", value="ok")
+        steps = StepBuilder().return_("done", value="ok")
         w = WorkflowBuilder().workflow("main", steps).build()
 
         build([("sub/dir/out.yaml", w)], output_dir=tmp_path)
@@ -128,7 +127,7 @@ class TestBuildOutputDir:
     def test_defaults_to_current_dir(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
 
-        steps = StepBuilder().step("done", "return", value="ok")
+        steps = StepBuilder().return_("done", value="ok")
         w = WorkflowBuilder().workflow("main", steps).build()
 
         written = build([("default_dir.yaml", w)])
@@ -137,7 +136,7 @@ class TestBuildOutputDir:
         assert written[0] == Path(".") / "default_dir.yaml"
 
     def test_accepts_string_output_dir(self, tmp_path):
-        steps = StepBuilder().step("done", "return", value="ok")
+        steps = StepBuilder().return_("done", value="ok")
         w = WorkflowBuilder().workflow("main", steps).build()
 
         build([("out.yaml", w)], output_dir=str(tmp_path))
@@ -156,8 +155,8 @@ class TestBuildYamlContent:
     def test_simple_workflow_yaml(self, tmp_path):
         steps = (
             StepBuilder()
-            .step("init", "assign", x=10, y=20)
-            .step("done", "return", value=expr("x + y"))
+            .assign("init", x=10, y=20)
+            .return_("done", value=expr("x + y"))
         )
         w = WorkflowBuilder().workflow("main", steps).build()
 
@@ -169,8 +168,8 @@ class TestBuildYamlContent:
         assert parsed[1] == {"done": {"return": "${x + y}"}}
 
     def test_subworkflows_yaml(self, tmp_path):
-        main = StepBuilder().step("done", "return", value="ok")
-        helper = StepBuilder().step("done", "return", value="also ok")
+        main = StepBuilder().return_("done", value="ok")
+        helper = StepBuilder().return_("done", value="also ok")
         w = (
             WorkflowBuilder()
             .workflow("main", main)
@@ -190,11 +189,7 @@ class TestBuildYamlContent:
         """Build to file, read back, parse — should match original."""
         from cloud_workflows.models import parse_workflow
 
-        steps = (
-            StepBuilder()
-            .step("init", "assign", x=42)
-            .step("done", "return", value=expr("x"))
-        )
+        steps = StepBuilder().assign("init", x=42).return_("done", value=expr("x"))
         w1 = WorkflowBuilder().workflow("main", steps).build()
 
         build([("rt.yaml", w1)], output_dir=tmp_path)
@@ -224,7 +219,7 @@ class TestBuildErrors:
             build([("a", "b", "c")], output_dir=tmp_path)  # type: ignore[list-item]
 
     def test_non_string_filename_raises(self, tmp_path):
-        steps = StepBuilder().step("done", "return", value="ok")
+        steps = StepBuilder().return_("done", value="ok")
         w = WorkflowBuilder().workflow("main", steps).build()
         with pytest.raises(TypeError, match="must be a.*tuple"):
             build([(123, w)], output_dir=tmp_path)  # type: ignore[list-item]
@@ -246,12 +241,12 @@ class TestBuildComposability:
         """Demonstrate composability via StepBuilder.apply()."""
 
         def common_setup() -> StepBuilder:
-            return StepBuilder().step("setup", "assign", initialized=True)
+            return StepBuilder().assign("setup", initialized=True)
 
         steps = (
             StepBuilder()
             .apply(common_setup())
-            .step("done", "return", value=expr("initialized"))
+            .return_("done", value=expr("initialized"))
         )
         w = WorkflowBuilder().workflow("main", steps).build()
 
@@ -264,11 +259,7 @@ class TestBuildComposability:
         """A factory function can produce the full workflows list."""
 
         def define_workflows():
-            main = (
-                StepBuilder()
-                .step("init", "assign", x=10)
-                .step("done", "return", value=expr("x"))
-            )
+            main = StepBuilder().assign("init", x=10).return_("done", value=expr("x"))
             return [
                 ("flow.yaml", WorkflowBuilder().workflow("main", main).build()),
             ]

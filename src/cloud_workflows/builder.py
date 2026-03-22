@@ -1,23 +1,27 @@
 """StepBuilder and WorkflowBuilder for constructing Cloud Workflows programmatically.
 
-StepBuilder builds a list of steps via .step() chaining. Each step type is
-dispatched via a match statement on the type string. Three input forms:
+StepBuilder builds a list of steps via per-type method chaining. Each step
+type has its own method that accepts either kwargs or a lambda configurator:
 
-1. String type + kwargs:  step("init", "assign", x=10, y=20)
-2. String type + lambda:  step("init", "assign", lambda a: a.set("x", 10))
-3. Model/dict passthrough: step("init", AssignStep(assign=[{"x": 10}]))
+    sb = (StepBuilder()
+        .assign("init", x=10, y=20)
+        .call("fetch", func="http.get", args={"url": url})
+        .return_("done", value=expr("x + y")))
 
-WorkflowBuilder composes StepBuilder(s) into SimpleWorkflow or SubworkflowsWorkflow.
+WorkflowBuilder composes StepBuilder(s) into SimpleWorkflow or SubworkflowsWorkflow:
 
-Usage:
-    from cloud_workflows import StepBuilder, WorkflowBuilder, expr
+    # Single main workflow (shorthand):
+    w = WorkflowBuilder().steps(sb).build()
 
-    main = (StepBuilder()
-        .step("init", "assign", x=10, y=20)
-        .step("done", "return", value=expr("x + y")))
+    # Multiple workflows:
+    w = (WorkflowBuilder()
+        .workflow("main", sb)
+        .workflow("helper", sb2, params=["n"])
+        .build())
 
-    workflow = WorkflowBuilder().workflow("main", main).build()
-    print(workflow.to_yaml())
+Write results to disk with build():
+
+    build([("my_workflow.yaml", w)])
 """
 
 from __future__ import annotations
@@ -28,11 +32,9 @@ from typing import (
     Callable,
     Dict,
     List,
-    Literal,
     Optional,
     Union,
     cast,
-    overload,
 )
 
 from .models import (
@@ -50,6 +52,7 @@ from .models import (
     SubworkflowsWorkflow,
     SwitchStep,
     TryStep,
+    Workflow,
     WorkflowDefinition,
 )
 from .steps import (
@@ -63,31 +66,6 @@ from .steps import (
     Switch,
     Try_,
 )
-
-# Union of all Pydantic step model types
-_StepModel = Union[
-    AssignStep,
-    CallStep,
-    ReturnStep,
-    RaiseStep,
-    SwitchStep,
-    ForStep,
-    ParallelStep,
-    TryStep,
-    NestedStepsStep,
-]
-
-# Union of all sub-builder types
-_SubBuilder = Union[Assign, Call, Return_, Raise_, Switch, For, Parallel, Try_, Steps]
-
-# Union type for switch condition dicts
-_SwitchConditionDict = Dict[str, Any]
-
-__all__ = [
-    "StepBuilder",
-    "WorkflowBuilder",
-    "build",
-]
 
 # All Pydantic step model types for isinstance checks
 _STEP_MODELS = (
@@ -105,6 +83,29 @@ _STEP_MODELS = (
 # All sub-builder types for isinstance checks
 _SUB_BUILDERS = (Assign, Call, Return_, Raise_, Switch, For, Parallel, Try_, Steps)
 
+# Type for steps= parameter: StepBuilder or lambda returning StepBuilder
+_StepsInput = Union["StepBuilder", Callable[["StepBuilder"], Any]]
+
+# Sentinel for distinguishing "not provided" from None
+_MISSING = object()
+
+__all__ = [
+    "StepBuilder",
+    "WorkflowBuilder",
+    "build",
+]
+
+
+def _resolve_steps_input(steps: _StepsInput) -> "StepBuilder":
+    """Resolve a _StepsInput to a StepBuilder instance."""
+    if isinstance(steps, StepBuilder):
+        return steps
+    if callable(steps):
+        sb = StepBuilder()
+        steps(sb)
+        return sb
+    raise TypeError(f"Expected StepBuilder or callable, got {type(steps).__name__}")
+
 
 # =============================================================================
 # StepBuilder
@@ -112,291 +113,405 @@ _SUB_BUILDERS = (Assign, Call, Return_, Raise_, Switch, For, Parallel, Try_, Ste
 
 
 class StepBuilder:
-    """Builds a list of workflow steps via .step() chaining.
+    """Builds a list of workflow steps via per-type method chaining.
 
-    Supports three input forms for step bodies:
-    1. String type + kwargs: step("id", "assign", x=10)
-    2. String type + lambda: step("id", "assign", lambda a: a.set("x", 10))
-    3. Passthrough: step("id", AssignStep(...)) or step("id", {"assign": [...]})
+    Each step type has its own method. Methods accept either keyword
+    arguments for configuration, or a single callable (lambda configurator)
+    that receives the corresponding sub-builder.
 
-    Also supports sub-builder instances: step("id", Assign().set("x", 10))
+    Usage::
+
+        sb = (StepBuilder()
+            .assign("init", x=10, y=20)
+            .call("fetch", func="http.get", args={"url": "..."})
+            .switch("check", lambda sw: sw
+                .condition(expr("x > 0"), next="positive")
+                .condition(True, next="negative"))
+            .return_("done", value=expr("x")))
     """
 
     def __init__(self) -> None:
         self._steps: List[Step] = []
 
-    # -----------------------------------------------------------------
-    # Overloads: Passthrough forms (dict, Pydantic model, sub-builder)
-    # -----------------------------------------------------------------
+    # -- helpers --------------------------------------------------------
 
-    @overload
-    def step(self, name: str, body: Dict[str, Any], /) -> StepBuilder: ...
-    @overload
-    def step(self, name: str, body: _StepModel, /) -> StepBuilder: ...
-    @overload
-    def step(self, name: str, body: _SubBuilder, /) -> StepBuilder: ...
-
-    # -----------------------------------------------------------------
-    # Overloads: "assign" — lambda and kwargs
-    # -----------------------------------------------------------------
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["assign"],
-        configurator: Callable[[Assign], Any],
-        /,
-    ) -> StepBuilder: ...
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["assign"],
-        /,
-        *,
-        items: List[Dict[str, Any]],
-        next: Optional[str] = ...,
-    ) -> StepBuilder: ...
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["assign"],
-        /,
-        **assignments: Any,
-    ) -> StepBuilder: ...
-
-    # -----------------------------------------------------------------
-    # Overloads: "call" — lambda and kwargs
-    # -----------------------------------------------------------------
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["call"],
-        configurator: Callable[[Call], Any],
-        /,
-    ) -> StepBuilder: ...
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["call"],
-        /,
-        *,
-        func: str = ...,
-        args: Optional[Dict[str, Any]] = ...,
-        result: Optional[str] = ...,
-        next: Optional[str] = ...,
-    ) -> StepBuilder: ...
-
-    # -----------------------------------------------------------------
-    # Overloads: "return" — lambda and kwargs
-    # -----------------------------------------------------------------
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["return"],
-        configurator: Callable[[Return_], Any],
-        /,
-    ) -> StepBuilder: ...
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["return"],
-        /,
-        *,
-        value: Any = ...,
-    ) -> StepBuilder: ...
-
-    # -----------------------------------------------------------------
-    # Overloads: "raise" — lambda and kwargs
-    # -----------------------------------------------------------------
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["raise"],
-        configurator: Callable[[Raise_], Any],
-        /,
-    ) -> StepBuilder: ...
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["raise"],
-        /,
-        *,
-        value: Any = ...,
-    ) -> StepBuilder: ...
-
-    # -----------------------------------------------------------------
-    # Overloads: "switch" — lambda and kwargs
-    # -----------------------------------------------------------------
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["switch"],
-        configurator: Callable[[Switch], Any],
-        /,
-    ) -> StepBuilder: ...
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["switch"],
-        /,
-        *,
-        conditions: List[_SwitchConditionDict] = ...,
-        next: Optional[str] = ...,
-    ) -> StepBuilder: ...
-
-    # -----------------------------------------------------------------
-    # Overloads: "for" — lambda and kwargs
-    # -----------------------------------------------------------------
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["for"],
-        configurator: Callable[[For], Any],
-        /,
-        *,
-        value: str = ...,
-    ) -> StepBuilder: ...
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["for"],
-        /,
-        *,
-        value: str = ...,
-        in_: Optional[Any] = ...,
-        range_: Optional[Any] = ...,
-        index: Optional[str] = ...,
-        steps: Any = ...,
-    ) -> StepBuilder: ...
-
-    # -----------------------------------------------------------------
-    # Overloads: "parallel" — lambda and kwargs
-    # -----------------------------------------------------------------
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["parallel"],
-        configurator: Callable[[Parallel], Any],
-        /,
-    ) -> StepBuilder: ...
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["parallel"],
-        /,
-        *,
-        branches: Dict[str, Any] = ...,
-        shared: Optional[List[str]] = ...,
-        exception_policy: Optional[str] = ...,
-        concurrency_limit: Optional[Union[int, str]] = ...,
-    ) -> StepBuilder: ...
-
-    # -----------------------------------------------------------------
-    # Overloads: "try" — lambda and kwargs
-    # -----------------------------------------------------------------
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["try"],
-        configurator: Callable[[Try_], Any],
-        /,
-    ) -> StepBuilder: ...
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["try"],
-        /,
-        *,
-        body: Any = ...,
-        retry: Optional[Union[Dict[str, Any], RetryConfig, str]] = ...,
-        except_: Optional[Union[Dict[str, Any], ExceptBody]] = ...,
-    ) -> StepBuilder: ...
-
-    # -----------------------------------------------------------------
-    # Overloads: "steps" — lambda and kwargs
-    # -----------------------------------------------------------------
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["steps"],
-        configurator: Callable[[Steps], Any],
-        /,
-    ) -> StepBuilder: ...
-
-    @overload
-    def step(
-        self,
-        name: str,
-        type: Literal["steps"],
-        /,
-        *,
-        body: Any = ...,
-        next: Optional[str] = ...,
-    ) -> StepBuilder: ...
-
-    # -----------------------------------------------------------------
-    # Implementation
-    # -----------------------------------------------------------------
-
-    def step(
-        self,
-        name: str,
-        type_or_body: Any,
-        configurator: Any = None,
-        **kwargs: Any,
-    ) -> StepBuilder:
-        """Add a step.
-
-        Args:
-            name: Step identifier.
-            type_or_body: A string type name ("assign", "call", etc.),
-                a Pydantic model instance, a dict, or a sub-builder instance.
-            configurator: Optional callable (lambda) for configuring sub-builders.
-                Only used when type_or_body is a string. If not callable,
-                treated as part of kwargs dispatch.
-            **kwargs: Additional keyword arguments for string-type dispatch.
-
-        Returns:
-            self, for chaining.
-        """
-        body = self._resolve_body(type_or_body, configurator, kwargs)
+    def _append(self, name: str, body: Any) -> StepBuilder:
+        """Append a step with the given name and body."""
         self._steps.append(Step(name=name, body=cast(Any, body)))
         return self
+
+    # -----------------------------------------------------------------
+    # assign
+    # -----------------------------------------------------------------
+
+    def assign(
+        self,
+        name: str,
+        configurator: Optional[Callable[[Assign], Any]] = None,
+        /,
+        **kwargs: Any,
+    ) -> StepBuilder:
+        """Add an assign step.
+
+        Forms::
+
+            # Shorthand kwargs — each kwarg becomes a variable assignment:
+            .assign("init", x=10, y=20)
+
+            # Explicit items list:
+            .assign("init", items=[{"x": 10}, {"y": 20}])
+
+            # Lambda configurator:
+            .assign("init", lambda a: a.set("x", 10).set("y", 20))
+        """
+        builder = Assign()
+        if configurator is not None and callable(configurator):
+            configurator(builder)
+            if "next" in kwargs:
+                builder.next(kwargs["next"])
+        elif kwargs:
+            if "items" in kwargs:
+                builder.items(kwargs["items"])
+                if "next" in kwargs:
+                    builder.next(kwargs["next"])
+            else:
+                for k, v in kwargs.items():
+                    if k == "next":
+                        builder.next(v)
+                    else:
+                        builder.set(k, v)
+        else:
+            raise ValueError("assign requires kwargs or a lambda configurator")
+        return self._append(name, builder.build())
+
+    # -----------------------------------------------------------------
+    # call
+    # -----------------------------------------------------------------
+
+    def call(
+        self,
+        name: str,
+        configurator: Optional[Callable[[Call], Any]] = None,
+        /,
+        *,
+        func: Optional[str] = None,
+        args: Optional[Dict[str, Any]] = None,
+        result: Optional[str] = None,
+        next: Optional[str] = None,
+    ) -> StepBuilder:
+        """Add a call step.
+
+        Forms::
+
+            .call("fetch", func="http.get", args={"url": "..."}, result="resp")
+            .call("fetch", lambda c: c.func("http.get").args(url="...").result("resp"))
+        """
+        builder = Call()
+        if configurator is not None and callable(configurator):
+            configurator(builder)
+        else:
+            if func is not None:
+                builder.func(func)
+            if args is not None:
+                builder.args(**args)
+            if result is not None:
+                builder.result(result)
+            if next is not None:
+                builder.next(next)
+            if func is None and configurator is None:
+                raise ValueError("call requires 'func' kwarg or a lambda configurator")
+        return self._append(name, builder.build())
+
+    # -----------------------------------------------------------------
+    # return_
+    # -----------------------------------------------------------------
+
+    def return_(
+        self,
+        name: str,
+        configurator: Optional[Callable[[Return_], Any]] = None,
+        /,
+        *,
+        value: Any = _MISSING,
+    ) -> StepBuilder:
+        """Add a return step.
+
+        Forms::
+
+            .return_("done", value=expr("x + y"))
+            .return_("done", lambda r: r.value(expr("x + y")))
+        """
+        builder = Return_()
+        if configurator is not None and callable(configurator):
+            configurator(builder)
+        elif value is not _MISSING:
+            builder.value(value)
+        else:
+            raise ValueError("return_ requires 'value' kwarg or a lambda configurator")
+        return self._append(name, builder.build())
+
+    # -----------------------------------------------------------------
+    # raise_
+    # -----------------------------------------------------------------
+
+    def raise_(
+        self,
+        name: str,
+        configurator: Optional[Callable[[Raise_], Any]] = None,
+        /,
+        *,
+        value: Any = _MISSING,
+    ) -> StepBuilder:
+        """Add a raise step.
+
+        Forms::
+
+            .raise_("err", value="something went wrong")
+            .raise_("err", lambda r: r.value({"code": 404}))
+        """
+        builder = Raise_()
+        if configurator is not None and callable(configurator):
+            configurator(builder)
+        elif value is not _MISSING:
+            builder.value(value)
+        else:
+            raise ValueError("raise_ requires 'value' kwarg or a lambda configurator")
+        return self._append(name, builder.build())
+
+    # -----------------------------------------------------------------
+    # switch
+    # -----------------------------------------------------------------
+
+    def switch(
+        self,
+        name: str,
+        configurator: Optional[Callable[[Switch], Any]] = None,
+        /,
+        *,
+        conditions: Optional[List[Dict[str, Any]]] = None,
+        next: Optional[str] = None,
+    ) -> StepBuilder:
+        """Add a switch step.
+
+        Forms::
+
+            .switch("check", conditions=[
+                {"condition": expr("x > 0"), "next": "positive"},
+                {"condition": True, "next": "negative"},
+            ])
+            .switch("check", lambda sw: sw
+                .condition(expr("x > 0"), next="positive")
+                .condition(True, next="negative"))
+        """
+        builder = Switch()
+        if configurator is not None and callable(configurator):
+            configurator(builder)
+        elif conditions is not None:
+            for cond in conditions:
+                cond_copy = dict(cond)
+                cond_value = cond_copy.pop("condition")
+                builder.condition(cond_value, **cond_copy)
+        else:
+            raise ValueError(
+                "switch requires 'conditions' kwarg or a lambda configurator"
+            )
+        if next is not None:
+            builder.next(next)
+        return self._append(name, builder.build())
+
+    # -----------------------------------------------------------------
+    # for_
+    # -----------------------------------------------------------------
+
+    def for_(
+        self,
+        name: str,
+        configurator: Optional[Callable[[For], Any]] = None,
+        /,
+        *,
+        value: Optional[str] = None,
+        in_: Optional[Any] = None,
+        range_: Optional[Any] = None,
+        index: Optional[str] = None,
+        steps: Optional[_StepsInput] = None,
+    ) -> StepBuilder:
+        """Add a for-loop step.
+
+        Forms::
+
+            .for_("loop", value="item", in_=["a", "b"],
+                  steps=StepBuilder().call("log", func="sys.log"))
+            .for_("loop", value="item", in_=items,
+                  steps=lambda s: s.call("log", func="sys.log"))
+            .for_("loop", lambda f: f
+                .value("item").in_(["a", "b"])
+                .steps(StepBuilder().call("log", func="sys.log")))
+        """
+        builder = For()
+        if configurator is not None and callable(configurator):
+            if value is not None:
+                builder.value(value)
+            configurator(builder)
+        elif value is not None:
+            builder.value(value)
+            if in_ is not None:
+                builder.in_(in_)
+            if range_ is not None:
+                builder.range_(range_)
+            if index is not None:
+                builder.index(index)
+            if steps is not None:
+                builder.steps(_resolve_steps_input(steps))
+        else:
+            raise ValueError("for_ requires kwargs or a lambda configurator")
+        return self._append(name, builder.build())
+
+    # -----------------------------------------------------------------
+    # parallel
+    # -----------------------------------------------------------------
+
+    def parallel(
+        self,
+        name: str,
+        configurator: Optional[Callable[[Parallel], Any]] = None,
+        /,
+        *,
+        branches: Optional[Dict[str, _StepsInput]] = None,
+        shared: Optional[List[str]] = None,
+        exception_policy: Optional[str] = None,
+        concurrency_limit: Optional[Union[int, str]] = None,
+    ) -> StepBuilder:
+        """Add a parallel step.
+
+        Forms::
+
+            .parallel("p", branches={
+                "b1": StepBuilder().assign("s", x=1),
+                "b2": StepBuilder().assign("s", y=2),
+            })
+            .parallel("p", lambda p: p
+                .branch("b1", StepBuilder().assign("s", x=1))
+                .branch("b2", StepBuilder().assign("s", y=2)))
+        """
+        builder = Parallel()
+        if configurator is not None and callable(configurator):
+            configurator(builder)
+        elif branches is not None:
+            for branch_name, branch_steps in branches.items():
+                builder.branch(branch_name, _resolve_steps_input(branch_steps))
+        else:
+            raise ValueError(
+                "parallel requires 'branches' kwarg or a lambda configurator"
+            )
+        if shared is not None:
+            builder.shared(shared)
+        if exception_policy is not None:
+            builder.exception_policy(exception_policy)
+        if concurrency_limit is not None:
+            builder.concurrency_limit(concurrency_limit)
+        return self._append(name, builder.build())
+
+    # -----------------------------------------------------------------
+    # try_
+    # -----------------------------------------------------------------
+
+    def try_(
+        self,
+        name: str,
+        configurator: Optional[Callable[[Try_], Any]] = None,
+        /,
+        *,
+        body: Optional[_StepsInput] = None,
+        retry: Optional[Union[Dict[str, Any], RetryConfig, str]] = None,
+        except_: Optional[Union[Dict[str, Any], ExceptBody]] = None,
+    ) -> StepBuilder:
+        """Add a try/retry/except step.
+
+        Forms::
+
+            .try_("t", body=StepBuilder().call("f", func="may_fail"),
+                  retry={"predicate": "http.default_retry", "max_retries": 3})
+            .try_("t", lambda t: t
+                .body(StepBuilder().call("f", func="may_fail"))
+                .retry(predicate="http.default_retry", max_retries=3))
+        """
+        builder = Try_()
+        if configurator is not None and callable(configurator):
+            configurator(builder)
+        elif body is not None:
+            builder.body(_resolve_steps_input(body))
+            if retry is not None:
+                if isinstance(retry, dict):
+                    builder.retry(**retry)
+                else:
+                    builder._retry = retry
+            if except_ is not None:
+                if isinstance(except_, dict):
+                    builder.except_(**except_)
+        else:
+            raise ValueError("try_ requires 'body' kwarg or a lambda configurator")
+        return self._append(name, builder.build())
+
+    # -----------------------------------------------------------------
+    # nested_steps (steps within steps)
+    # -----------------------------------------------------------------
+
+    def nested_steps(
+        self,
+        name: str,
+        configurator: Optional[Callable[[Steps], Any]] = None,
+        /,
+        *,
+        body: Optional[_StepsInput] = None,
+        next: Optional[str] = None,
+    ) -> StepBuilder:
+        """Add a nested steps step.
+
+        Forms::
+
+            .nested_steps("block", body=StepBuilder().assign("s", x=1), next="end")
+            .nested_steps("block", lambda s: s.body(sb).next("end"))
+        """
+        builder = Steps()
+        if configurator is not None and callable(configurator):
+            configurator(builder)
+        elif body is not None:
+            builder.body(_resolve_steps_input(body))
+        else:
+            raise ValueError(
+                "nested_steps requires 'body' kwarg or a lambda configurator"
+            )
+        if next is not None:
+            builder.next(next)
+        return self._append(name, builder.build())
+
+    # -----------------------------------------------------------------
+    # raw passthrough (dict, Pydantic model, or sub-builder)
+    # -----------------------------------------------------------------
+
+    def raw(self, name: str, body: Any) -> StepBuilder:
+        """Add a step from a raw dict, Pydantic model, or sub-builder.
+
+        This is the escape hatch for passing pre-built step bodies directly::
+
+            .raw("init", AssignStep(assign=[{"x": 10}]))
+            .raw("init", {"assign": [{"x": 10}]})
+            .raw("init", Assign().set("x", 10))
+        """
+        if isinstance(body, _SUB_BUILDERS):
+            return self._append(name, body.build())
+        if isinstance(body, _STEP_MODELS):
+            return self._append(name, body)
+        if isinstance(body, dict):
+            return self._append(name, body)
+        raise TypeError(
+            f"raw() body must be a dict, Pydantic model, or sub-builder, "
+            f"got {type(body).__name__}"
+        )
+
+    # -----------------------------------------------------------------
+    # apply (merge steps from another builder)
+    # -----------------------------------------------------------------
 
     def apply(
         self,
@@ -418,251 +533,22 @@ class StepBuilder:
             source = result
         if not isinstance(source, StepBuilder):
             raise TypeError(
-                f"StepBuilder.apply() requires a StepBuilder instance, got {type(source).__name__}"
+                f"apply() requires a StepBuilder instance, got {type(source).__name__}"
             )
         self._steps.extend(source._steps)
         return self
+
+    # -----------------------------------------------------------------
+    # build
+    # -----------------------------------------------------------------
 
     def build(self) -> List[Step]:
         """Return the list of Step objects."""
         return list(self._steps)
 
-    def _resolve_body(
-        self,
-        type_or_body: Any,
-        configurator: Any,
-        kwargs: Dict[str, Any],
-    ) -> Any:
-        """Resolve the step body from the various input forms."""
-        # Sub-builder instance passed directly
-        if isinstance(type_or_body, _SUB_BUILDERS):
-            return type_or_body.build()
 
-        # Pydantic model passthrough
-        if isinstance(type_or_body, _STEP_MODELS):
-            return type_or_body
-
-        # Dict passthrough
-        if isinstance(type_or_body, dict):
-            return type_or_body
-
-        # String type dispatch
-        if isinstance(type_or_body, str):
-            return self._dispatch_string_type(type_or_body, configurator, kwargs)
-
-        raise TypeError(
-            f"step() type_or_body must be a string, dict, Pydantic model, "
-            f"or sub-builder, got {type(type_or_body).__name__}"
-        )
-
-    def _dispatch_string_type(
-        self,
-        step_type: str,
-        configurator: Any,
-        kwargs: Dict[str, Any],
-    ) -> Any:
-        """Dispatch string step types to sub-builders via match."""
-        is_lambda = callable(configurator)
-
-        match step_type:
-            case "assign":
-                return self._build_assign(is_lambda, configurator, kwargs)
-            case "call":
-                return self._build_call(is_lambda, configurator, kwargs)
-            case "return":
-                return self._build_return(is_lambda, configurator, kwargs)
-            case "raise":
-                return self._build_raise(is_lambda, configurator, kwargs)
-            case "switch":
-                return self._build_switch(is_lambda, configurator, kwargs)
-            case "for":
-                return self._build_for(is_lambda, configurator, kwargs)
-            case "parallel":
-                return self._build_parallel(is_lambda, configurator, kwargs)
-            case "try":
-                return self._build_try(is_lambda, configurator, kwargs)
-            case "steps":
-                return self._build_steps(is_lambda, configurator, kwargs)
-            case _:
-                raise ValueError(f"Unknown step type: '{step_type}'")
-
-    # -- Individual type builders --
-
-    def _build_assign(
-        self, is_lambda: bool, configurator: Any, kwargs: Dict[str, Any]
-    ) -> AssignStep:
-        builder = Assign()
-        if is_lambda:
-            configurator(builder)
-        elif kwargs:
-            if "items" in kwargs:
-                builder.items(kwargs["items"])
-            else:
-                for k, v in kwargs.items():
-                    if k == "next":
-                        builder.next(v)
-                    else:
-                        builder.set(k, v)
-        else:
-            raise ValueError("assign step requires kwargs or a lambda configurator")
-        return builder.build()
-
-    def _build_call(
-        self, is_lambda: bool, configurator: Any, kwargs: Dict[str, Any]
-    ) -> CallStep:
-        builder = Call()
-        if is_lambda:
-            configurator(builder)
-        elif kwargs:
-            if "func" in kwargs:
-                builder.func(kwargs["func"])
-            if "args" in kwargs:
-                builder.args(**kwargs["args"])
-            if "result" in kwargs:
-                builder.result(kwargs["result"])
-            if "next" in kwargs:
-                builder.next(kwargs["next"])
-        else:
-            raise ValueError("call step requires kwargs or a lambda configurator")
-        return builder.build()
-
-    def _build_return(
-        self, is_lambda: bool, configurator: Any, kwargs: Dict[str, Any]
-    ) -> ReturnStep:
-        builder = Return_()
-        if is_lambda:
-            configurator(builder)
-        elif "value" in kwargs:
-            builder.value(kwargs["value"])
-        else:
-            raise ValueError(
-                "return step requires 'value' kwarg or a lambda configurator"
-            )
-        return builder.build()
-
-    def _build_raise(
-        self, is_lambda: bool, configurator: Any, kwargs: Dict[str, Any]
-    ) -> RaiseStep:
-        builder = Raise_()
-        if is_lambda:
-            configurator(builder)
-        elif "value" in kwargs:
-            builder.value(kwargs["value"])
-        else:
-            raise ValueError(
-                "raise step requires 'value' kwarg or a lambda configurator"
-            )
-        return builder.build()
-
-    def _build_switch(
-        self, is_lambda: bool, configurator: Any, kwargs: Dict[str, Any]
-    ) -> SwitchStep:
-        builder = Switch()
-        if is_lambda:
-            configurator(builder)
-        elif "conditions" in kwargs:
-            for cond in kwargs["conditions"]:
-                cond_copy = dict(cond)
-                cond_value = cond_copy.pop("condition")
-                builder.condition(cond_value, **cond_copy)
-            if "next" in kwargs:
-                builder.next(kwargs["next"])
-        else:
-            raise ValueError(
-                "switch step requires 'conditions' kwarg or a lambda configurator"
-            )
-        return builder.build()
-
-    def _build_for(
-        self, is_lambda: bool, configurator: Any, kwargs: Dict[str, Any]
-    ) -> ForStep:
-        builder = For()
-        if is_lambda:
-            # For lambda, 'value' must come from kwargs since For() needs it
-            if "value" in kwargs:
-                builder.value(kwargs["value"])
-            configurator(builder)
-        elif kwargs:
-            if "value" in kwargs:
-                builder.value(kwargs["value"])
-            if "in_" in kwargs:
-                builder.in_(kwargs["in_"])
-            if "range_" in kwargs:
-                builder.range_(kwargs["range_"])
-            if "index" in kwargs:
-                builder.index(kwargs["index"])
-            if "steps" in kwargs:
-                builder.steps(kwargs["steps"])
-        else:
-            raise ValueError("for step requires kwargs or a lambda configurator")
-        return builder.build()
-
-    def _build_parallel(
-        self, is_lambda: bool, configurator: Any, kwargs: Dict[str, Any]
-    ) -> ParallelStep:
-        builder = Parallel()
-        if is_lambda:
-            configurator(builder)
-        elif "branches" in kwargs:
-            branches = kwargs["branches"]
-            if isinstance(branches, dict):
-                for name, steps in branches.items():
-                    builder.branch(name, steps)
-            else:
-                raise ValueError(
-                    "parallel 'branches' must be a dict of {name: StepBuilder}"
-                )
-            if "shared" in kwargs:
-                builder.shared(kwargs["shared"])
-            if "exception_policy" in kwargs:
-                builder.exception_policy(kwargs["exception_policy"])
-            if "concurrency_limit" in kwargs:
-                builder.concurrency_limit(kwargs["concurrency_limit"])
-        else:
-            raise ValueError(
-                "parallel step requires 'branches' kwarg or a lambda configurator"
-            )
-        return builder.build()
-
-    def _build_try(
-        self, is_lambda: bool, configurator: Any, kwargs: Dict[str, Any]
-    ) -> TryStep:
-        builder = Try_()
-        if is_lambda:
-            configurator(builder)
-        elif kwargs:
-            if "body" in kwargs:
-                builder.body(kwargs["body"])
-            if "retry" in kwargs:
-                retry = kwargs["retry"]
-                if isinstance(retry, dict):
-                    builder.retry(**retry)
-                else:
-                    builder._retry = retry
-            if "except_" in kwargs:
-                exc = kwargs["except_"]
-                if isinstance(exc, dict):
-                    builder.except_(**exc)
-        else:
-            raise ValueError("try step requires kwargs or a lambda configurator")
-        return builder.build()
-
-    def _build_steps(
-        self, is_lambda: bool, configurator: Any, kwargs: Dict[str, Any]
-    ) -> NestedStepsStep:
-        builder = Steps()
-        if is_lambda:
-            configurator(builder)
-        elif kwargs:
-            if "body" in kwargs:
-                builder.body(kwargs["body"])
-            if "next" in kwargs:
-                builder.next(kwargs["next"])
-        else:
-            raise ValueError("steps step requires kwargs or a lambda configurator")
-        return builder.build()
-
-
+# =============================================================================
+# WorkflowBuilder
 # =============================================================================
 # WorkflowBuilder
 # =============================================================================
@@ -671,14 +557,16 @@ class StepBuilder:
 class WorkflowBuilder:
     """Composes StepBuilder(s) into SimpleWorkflow or SubworkflowsWorkflow.
 
-    Usage:
-        # Simple (single 'main' workflow without params):
-        w = WorkflowBuilder().workflow("main", step_builder).build()
+    Usage::
 
-        # Subworkflows:
+        # Single main workflow (shorthand):
+        w = WorkflowBuilder().steps(sb).build()
+        w = WorkflowBuilder().steps(lambda s: s.assign("init", x=10)).build()
+
+        # Multiple workflows / subworkflows:
         w = (WorkflowBuilder()
-            .workflow("main", main_steps)
-            .workflow("helper", helper_steps, params=["n"])
+            .workflow("main", main_sb)
+            .workflow("helper", helper_sb, params=["n"])
             .build())
     """
 
@@ -687,18 +575,28 @@ class WorkflowBuilder:
             str, tuple[Optional[List[Union[str, Dict[str, Any]]]], List[Step]]
         ] = {}
 
+    def steps(self, steps: _StepsInput) -> WorkflowBuilder:
+        """Shorthand: define the 'main' workflow without params.
+
+        Equivalent to ``.workflow("main", steps)``.
+
+        Args:
+            steps: A StepBuilder instance or a callable that configures one.
+        """
+        return self.workflow("main", steps)
+
     def workflow(
         self,
         name: str,
-        steps: StepBuilder,
+        steps: _StepsInput,
         *,
         params: Optional[List[Union[str, Dict[str, Any]]]] = None,
     ) -> WorkflowBuilder:
-        """Add a workflow definition.
+        """Add a named workflow definition.
 
         Args:
             name: Workflow name (e.g. "main", "helper").
-            steps: A StepBuilder containing the workflow's steps.
+            steps: A StepBuilder instance or a callable that configures one.
             params: Optional parameter list for the workflow.
 
         Returns:
@@ -707,7 +605,8 @@ class WorkflowBuilder:
         if name in self._workflows:
             raise ValueError(f"Duplicate workflow name: '{name}'")
 
-        step_list = steps.build()
+        sb = _resolve_steps_input(steps)
+        step_list = sb.build()
         self._workflows[name] = (params, step_list)
         return self
 
@@ -715,21 +614,22 @@ class WorkflowBuilder:
         """Finalize and return the constructed workflow.
 
         Returns:
-            SimpleWorkflow if there is exactly one workflow named "main" with no params.
-            SubworkflowsWorkflow otherwise.
+            SimpleWorkflow if there is exactly one workflow named "main"
+            with no params. SubworkflowsWorkflow otherwise.
 
         Raises:
-            ValueError: If no workflows were defined or any workflow has no steps.
+            ValueError: If no workflows were defined or any workflow has
+                no steps.
         """
         if not self._workflows:
-            raise ValueError("No workflows defined — call .workflow() first")
+            raise ValueError(
+                "No workflows defined — call .workflow() or .steps() first"
+            )
 
         # Validate all workflows have steps
         for wf_name, (_, wf_steps) in self._workflows.items():
             if not wf_steps:
-                raise ValueError(
-                    f"Workflow '{wf_name}' has no steps — add at least one .step()"
-                )
+                raise ValueError(f"Workflow '{wf_name}' has no steps")
 
         # Single 'main' workflow without params → SimpleWorkflow
         if len(self._workflows) == 1 and "main" in self._workflows:
@@ -750,9 +650,6 @@ class WorkflowBuilder:
 # =============================================================================
 # build() — write workflow definitions to YAML files
 # =============================================================================
-
-# Import Workflow type alias
-from .models import Workflow
 
 
 def build(
@@ -783,11 +680,11 @@ def build(
         from cloud_workflows import StepBuilder, WorkflowBuilder, build, expr
 
         main = (StepBuilder()
-            .step("init", "assign", x=10, y=20)
-            .step("done", "return", value=expr("x + y")))
+            .assign("init", x=10, y=20)
+            .return_("done", value=expr("x + y")))
 
         build([
-            ("my_workflow.yaml", WorkflowBuilder().workflow("main", main).build()),
+            ("my_workflow.yaml", WorkflowBuilder().steps(main).build()),
         ])
     """
     if not workflows:

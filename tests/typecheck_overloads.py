@@ -1,7 +1,7 @@
-"""Type-check test for StepBuilder.step() overloads.
+"""Type-check test for StepBuilder per-type methods.
 
 This file is not run as a test — it is checked by pyright to verify
-that all overloaded call signatures resolve correctly.
+that all method signatures resolve correctly.
 """
 
 from cloud_workflows import (
@@ -20,68 +20,72 @@ from cloud_workflows.models import AssignStep, ReturnStep, expr
 
 sb = StepBuilder()
 
-# Passthrough: dict
-sb.step("s1", {"assign": [{"x": 1}]})
-
-# Passthrough: Pydantic model
-sb.step("s2", AssignStep(assign=[{"x": 1}]))
-
-# Passthrough: sub-builder
-sb.step("s3", Assign().set("x", 1))
-
 # assign with shorthand kwargs (arbitrary variable names)
-sb.step("init", "assign", x=10, y=20)
+sb.assign("init", x=10, y=20)
 
 # assign with items
-sb.step("init2", "assign", items=[{"x": 10}])
+sb.assign("init2", items=[{"x": 10}])
 
 # assign with lambda
-sb.step("init3", "assign", lambda a: a.set("x", 10))
+sb.assign("init3", lambda a: a.set("x", 10))
 
 # call with kwargs
-sb.step("c1", "call", func="sys.log", args={"text": "hi"})
+sb.call("c1", func="sys.log", args={"text": "hi"})
 
 # call with lambda
-sb.step("c2", "call", lambda c: c.func("sys.log").args(text="hi"))
+sb.call("c2", lambda c: c.func("sys.log").args(text="hi"))
 
 # return with kwargs
-sb.step("r1", "return", value="ok")
+sb.return_("r1", value="ok")
 
 # return with lambda
-sb.step("r2", "return", lambda r: r.value("ok"))
+sb.return_("r2", lambda r: r.value("ok"))
 
 # raise with kwargs
-sb.step("e1", "raise", value="err")
+sb.raise_("e1", value="err")
 
 # raise with lambda
-sb.step("e2", "raise", lambda r: r.value("err"))
+sb.raise_("e2", lambda r: r.value("err"))
 
 # switch with kwargs
-sb.step("sw1", "switch", conditions=[{"condition": True, "next": "end"}])
+sb.switch("sw1", conditions=[{"condition": True, "next": "end"}])
 
 # switch with lambda
-sb.step("sw2", "switch", lambda s: s.condition(True, next="end"))
+sb.switch("sw2", lambda s: s.condition(True, next="end"))
 
 # for with kwargs
-sb.step("f1", "for", value="item", in_=["a", "b"], steps=[])
+sb.for_("f1", value="item", in_=["a", "b"], steps=StepBuilder())
 
 # for with lambda + value kwarg
-sb.step("f2", "for", lambda f: f.in_(["a"]).steps(sb), value="item")
+sb.for_("f2", lambda f: f.in_(["a"]).steps(StepBuilder()), value="item")
 
 # parallel with kwargs
-sb.step("p1", "parallel", branches={"b1": sb, "b2": sb})
+sb.parallel("p1", branches={"b1": StepBuilder(), "b2": StepBuilder()})
 
 # parallel with lambda
-sb.step("p2", "parallel", lambda p: p.branch("b1", sb).branch("b2", sb))
+sb.parallel("p2", lambda p: p.branch("b1", StepBuilder()).branch("b2", StepBuilder()))
 
 # try with kwargs
-sb.step("t1", "try", body=sb)
+sb.try_("t1", body=StepBuilder())
 
 # try with lambda
-sb.step("t2", "try", lambda t: t.body(sb))
+sb.try_("t2", lambda t: t.body(StepBuilder()))
 
-# steps with kwargs
-sb.step("n1", "steps", body=sb, next="end")
+# nested_steps with kwargs
+sb.nested_steps("n1", body=StepBuilder(), next="end")
 
-# steps with lambda
-sb.step("n2", "steps", lambda s: s.body(sb).next("end"))
+# nested_steps with lambda
+sb.nested_steps("n2", lambda s: s.body(StepBuilder()).next("end"))
+
+# raw passthrough: dict
+sb.raw("r_dict", {"assign": [{"x": 1}]})
+
+# raw passthrough: Pydantic model
+sb.raw("r_model", AssignStep(assign=[{"x": 1}]))
+
+# raw passthrough: sub-builder
+sb.raw("r_sub", Assign().set("x", 1))
+
+# apply
+sb.apply(StepBuilder())
+sb.apply(lambda: StepBuilder())

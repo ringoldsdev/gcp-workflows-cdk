@@ -1,6 +1,7 @@
 """Tests for WorkflowBuilder.
 
 WorkflowBuilder composes StepBuilder(s) into SimpleWorkflow or SubworkflowsWorkflow.
+Supports .steps() shorthand, lambda forms, and direct StepBuilder instances.
 """
 
 import pytest
@@ -31,8 +32,8 @@ class TestSimpleWorkflow:
     def test_single_main_workflow(self):
         steps = (
             StepBuilder()
-            .step("init", "assign", x=10, y=20)
-            .step("done", "return", value=expr("x + y"))
+            .assign("init", x=10, y=20)
+            .return_("done", value=expr("x + y"))
         )
         w = WorkflowBuilder().workflow("main", steps).build()
         assert isinstance(w, SimpleWorkflow)
@@ -41,9 +42,66 @@ class TestSimpleWorkflow:
 
     def test_single_main_with_params_produces_subworkflows(self):
         """Even a single workflow gets SubworkflowsWorkflow if it has params."""
-        steps = StepBuilder().step("done", "return", value="ok")
+        steps = StepBuilder().return_("done", value="ok")
         w = WorkflowBuilder().workflow("main", steps, params=["input"]).build()
         assert isinstance(w, SubworkflowsWorkflow)
+
+
+# =============================================================================
+# .steps() shorthand
+# =============================================================================
+
+
+class TestStepsShorthand:
+    """WorkflowBuilder.steps() is shorthand for .workflow("main", ...)."""
+
+    def test_steps_with_builder(self):
+        sb = (
+            StepBuilder()
+            .assign("init", x=10, y=20)
+            .return_("done", value=expr("x + y"))
+        )
+        w = WorkflowBuilder().steps(sb).build()
+        assert isinstance(w, SimpleWorkflow)
+        expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
+        assert w.to_dict() == expected
+
+    def test_steps_with_lambda(self):
+        w = (
+            WorkflowBuilder()
+            .steps(
+                lambda s: s.assign("init", x=10, y=20).return_(
+                    "done", value=expr("x + y")
+                )
+            )
+            .build()
+        )
+        assert isinstance(w, SimpleWorkflow)
+        expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
+        assert w.to_dict() == expected
+
+
+# =============================================================================
+# Lambda forms for .workflow()
+# =============================================================================
+
+
+class TestWorkflowLambda:
+    """WorkflowBuilder.workflow() accepts lambdas."""
+
+    def test_workflow_with_lambda(self):
+        w = (
+            WorkflowBuilder()
+            .workflow(
+                "main",
+                lambda s: s.assign("init", x=10).return_("done", value=expr("x")),
+            )
+            .build()
+        )
+        assert isinstance(w, SimpleWorkflow)
+        d = w.to_dict()
+        assert d[0] == {"init": {"assign": [{"x": 10}]}}
+        assert d[1] == {"done": {"return": "${x}"}}
 
 
 # =============================================================================
@@ -57,19 +115,18 @@ class TestSubworkflows:
     def test_two_workflows(self):
         main = (
             StepBuilder()
-            .step(
+            .call(
                 "call_helper",
-                "call",
                 func="helper",
                 args={"input": "test"},
                 result="res",
             )
-            .step("done", "return", value=expr("res"))
+            .return_("done", value=expr("res"))
         )
         helper = (
             StepBuilder()
-            .step("log", "call", func="sys.log", args={"text": expr("input")})
-            .step("done", "return", value="ok")
+            .call("log", func="sys.log", args={"text": expr("input")})
+            .return_("done", value="ok")
         )
         w = (
             WorkflowBuilder()
@@ -83,7 +140,7 @@ class TestSubworkflows:
 
     def test_non_main_single_workflow(self):
         """Single workflow not named 'main' produces SubworkflowsWorkflow."""
-        steps = StepBuilder().step("done", "return", value="ok")
+        steps = StepBuilder().return_("done", value="ok")
         w = WorkflowBuilder().workflow("helper", steps).build()
         assert isinstance(w, SubworkflowsWorkflow)
 
@@ -94,14 +151,10 @@ class TestSubworkflows:
 
 
 class TestRoundTrip:
-    """Build → YAML → parse → compare."""
+    """Build -> YAML -> parse -> compare."""
 
     def test_simple_round_trip(self):
-        steps = (
-            StepBuilder()
-            .step("init", "assign", x=10)
-            .step("done", "return", value=expr("x"))
-        )
+        steps = StepBuilder().assign("init", x=10).return_("done", value=expr("x"))
         w1 = WorkflowBuilder().workflow("main", steps).build()
         w2 = parse_workflow(w1.to_yaml())
         assert w1.to_dict() == w2.to_dict()
@@ -109,10 +162,10 @@ class TestRoundTrip:
     def test_subworkflows_round_trip(self):
         main = (
             StepBuilder()
-            .step("s1", "call", func="helper", result="r")
-            .step("s2", "return", value=expr("r"))
+            .call("s1", func="helper", result="r")
+            .return_("s2", value=expr("r"))
         )
-        helper = StepBuilder().step("s1", "return", value="ok")
+        helper = StepBuilder().return_("s1", value="ok")
         w1 = WorkflowBuilder().workflow("main", main).workflow("helper", helper).build()
         w2 = parse_workflow(w1.to_yaml())
         assert w1.to_dict() == w2.to_dict()
@@ -129,8 +182,8 @@ class TestWorkflowValidation:
     def test_simple_validates(self):
         steps = (
             StepBuilder()
-            .step("init", "assign", x=10, y=20)
-            .step("done", "return", value=expr("x + y"))
+            .assign("init", x=10, y=20)
+            .return_("done", value=expr("x + y"))
         )
         w = WorkflowBuilder().workflow("main", steps).build()
         result = analyze_workflow(w)
@@ -139,19 +192,18 @@ class TestWorkflowValidation:
     def test_subworkflows_validates(self):
         main = (
             StepBuilder()
-            .step(
+            .call(
                 "call_helper",
-                "call",
                 func="helper",
                 args={"input": "test"},
                 result="res",
             )
-            .step("done", "return", value=expr("res"))
+            .return_("done", value=expr("res"))
         )
         helper = (
             StepBuilder()
-            .step("log", "call", func="sys.log", args={"text": expr("input")})
-            .step("done", "return", value="ok")
+            .call("log", func="sys.log", args={"text": expr("input")})
+            .return_("done", value="ok")
         )
         w = (
             WorkflowBuilder()
@@ -176,7 +228,7 @@ class TestWorkflowBuilderErrors:
             WorkflowBuilder().build()
 
     def test_duplicate_workflow_name_raises(self):
-        steps = StepBuilder().step("s1", "assign", x=1)
+        steps = StepBuilder().assign("s1", x=1)
         with pytest.raises(ValueError, match="Duplicate workflow name"):
             (WorkflowBuilder().workflow("main", steps).workflow("main", steps))
 
