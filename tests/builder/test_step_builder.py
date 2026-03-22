@@ -920,6 +920,287 @@ class TestStepBuilderApply:
 
 
 # =============================================================================
+# Dot-path unnesting
+# =============================================================================
+
+
+class TestDotPathUnnesting:
+    """Assign.set() and StepBuilder.assign() kwargs unnest dot-separated keys."""
+
+    # -- via Assign.set() --
+
+    def test_set_dotpath_simple(self):
+        sb = StepBuilder().assign(
+            "init",
+            lambda a: a.set("a.b.c", 1).set("x", 10),
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "dotpath_assign.yaml"))
+        assert d == expected
+
+    def test_set_dotpath_deep(self):
+        sb = StepBuilder().assign(
+            "init",
+            lambda a: (
+                a.set("config.http.timeout", 30)
+                .set("config.http.retries", 3)
+                .set("simple", True)
+            ),
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "dotpath_deep.yaml"))
+        assert d == expected
+
+    def test_set_no_dot_unchanged(self):
+        """Keys without dots are not affected."""
+        sb = StepBuilder().assign("init", lambda a: a.set("x", 1))
+        d = _to_dict(sb)
+        assert d == [{"init": {"assign": [{"x": 1}]}}]
+
+    # -- via StepBuilder.assign() kwargs --
+
+    def test_kwargs_dotpath(self):
+        """StepBuilder.assign() kwargs pass through Assign.set() which unnests."""
+        sb = StepBuilder().assign("init", **{"a.b.c": 1, "x": 10})
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "dotpath_assign.yaml"))
+        assert d == expected
+
+    def test_kwargs_dotpath_deep(self):
+        sb = StepBuilder().assign(
+            "init",
+            **{
+                "config.http.timeout": 30,
+                "config.http.retries": 3,
+                "simple": True,
+            },
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "dotpath_deep.yaml"))
+        assert d == expected
+
+    # -- direct sub-builder --
+
+    def test_direct_sub_builder_dotpath(self):
+        sb = StepBuilder().raw(
+            "init",
+            Assign().set("a.b.c", 1).set("x", 10),
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "dotpath_assign.yaml"))
+        assert d == expected
+
+
+# =============================================================================
+# Lambda inner StepBuilder on sub-builders
+# =============================================================================
+
+
+class TestLambdaInnerStepBuilder:
+    """Sub-builders accept lambdas that receive a StepBuilder for inner steps."""
+
+    # -- For.steps() --
+
+    def test_for_steps_lambda(self):
+        """For.steps() accepts a lambda that receives a StepBuilder."""
+        sb = StepBuilder().for_(
+            "loop",
+            lambda f: f.in_(["a", "b", "c"]).steps(
+                lambda s: s.call("log", func="sys.log", args={"text": expr("item")})
+            ),
+            value="item",
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "for_lambda_inner.yaml"))
+        assert d == expected
+
+    def test_for_direct_sub_builder_lambda(self):
+        """For() sub-builder used via .raw() with lambda steps."""
+        sb = StepBuilder().raw(
+            "loop",
+            For("item")
+            .in_(["a", "b", "c"])
+            .steps(
+                lambda s: s.call("log", func="sys.log", args={"text": expr("item")})
+            ),
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "for_lambda_inner.yaml"))
+        assert d == expected
+
+    # -- Parallel.branch() --
+
+    def test_parallel_branch_lambda(self):
+        """Parallel.branch() accepts a lambda that receives a StepBuilder."""
+        sb = StepBuilder().parallel(
+            "parallel_work",
+            lambda p: p.branch(
+                "branch1",
+                lambda s: s.call("b1_step", func="sys.log", args={"text": "branch1"}),
+            ).branch(
+                "branch2",
+                lambda s: s.call("b2_step", func="sys.log", args={"text": "branch2"}),
+            ),
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "parallel_lambda_inner.yaml"))
+        assert d == expected
+
+    def test_parallel_direct_sub_builder_lambda(self):
+        """Parallel() sub-builder used via .raw() with lambda steps."""
+        sb = StepBuilder().raw(
+            "parallel_work",
+            Parallel()
+            .branch(
+                "branch1",
+                lambda s: s.call("b1_step", func="sys.log", args={"text": "branch1"}),
+            )
+            .branch(
+                "branch2",
+                lambda s: s.call("b2_step", func="sys.log", args={"text": "branch2"}),
+            ),
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "parallel_lambda_inner.yaml"))
+        assert d == expected
+
+    # -- Try_.body() --
+
+    def test_try_body_lambda(self):
+        """Try_.body() accepts a lambda that receives a StepBuilder."""
+        sb = StepBuilder().try_(
+            "try_call",
+            lambda t: t.body(
+                lambda s: s.call(
+                    "call",
+                    func="http.get",
+                    args={"url": "https://example.com"},
+                    result="response",
+                )
+            ).except_(
+                as_="e",
+                steps=StepBuilder().raise_("handle", value=expr("e")),
+            ),
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "try_lambda_inner.yaml"))
+        assert d == expected
+
+    def test_try_direct_sub_builder_lambda_body(self):
+        """Try_() sub-builder used via .raw() with lambda body."""
+        sb = StepBuilder().raw(
+            "try_call",
+            Try_(
+                lambda s: s.call(
+                    "call",
+                    func="http.get",
+                    args={"url": "https://example.com"},
+                    result="response",
+                )
+            ).except_(
+                as_="e",
+                steps=StepBuilder().raise_("handle", value=expr("e")),
+            ),
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "try_lambda_inner.yaml"))
+        assert d == expected
+
+    # -- Try_.except_(steps=lambda) --
+
+    def test_try_except_steps_lambda(self):
+        """Try_.except_(steps=lambda) accepts a lambda for the except handler."""
+        body = StepBuilder().call(
+            "call",
+            func="http.get",
+            args={"url": "https://example.com"},
+            result="response",
+        )
+        sb = StepBuilder().try_(
+            "try_call",
+            lambda t: t.body(body).except_(
+                as_="e",
+                steps=lambda s: s.raise_("handle", value=expr("e")),
+            ),
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "try_lambda_inner.yaml"))
+        assert d == expected
+
+    # -- Steps.body() --
+
+    def test_steps_body_lambda(self):
+        """Steps.body() accepts a lambda that receives a StepBuilder."""
+        sb = (
+            StepBuilder()
+            .nested_steps(
+                "group",
+                lambda s: s.body(
+                    lambda inner: inner.call(
+                        "step_a", func="sys.log", args={"text": "a"}
+                    ).call("step_b", func="sys.log", args={"text": "b"})
+                ).next("done"),
+            )
+            .return_("done", value="ok")
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "steps_lambda_inner.yaml"))
+        assert d == expected
+
+    def test_steps_direct_sub_builder_lambda(self):
+        """Steps() sub-builder used via .raw() with lambda body."""
+        sb = (
+            StepBuilder()
+            .raw(
+                "group",
+                Steps(
+                    lambda inner: inner.call(
+                        "step_a", func="sys.log", args={"text": "a"}
+                    ).call("step_b", func="sys.log", args={"text": "b"})
+                ).next("done"),
+            )
+            .return_("done", value="ok")
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "steps_lambda_inner.yaml"))
+        assert d == expected
+
+    # -- Switch.condition(steps=lambda) --
+
+    def test_switch_condition_steps_lambda(self):
+        """Switch.condition(steps=lambda) accepts a lambda for inline steps."""
+        sb = StepBuilder().switch(
+            "check",
+            lambda s: s.condition(
+                expr("x > 0"),
+                steps=lambda inner: inner.call(
+                    "log_positive", func="sys.log", args={"text": "positive"}
+                ),
+            ).condition(True, next="fallback"),
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "switch_lambda_inner.yaml"))
+        assert d == expected
+
+    def test_switch_direct_sub_builder_lambda_steps(self):
+        """Switch() sub-builder used via .raw() with lambda steps in condition."""
+        sb = StepBuilder().raw(
+            "check",
+            Switch()
+            .condition(
+                expr("x > 0"),
+                steps=lambda inner: inner.call(
+                    "log_positive", func="sys.log", args={"text": "positive"}
+                ),
+            )
+            .condition(True, next="fallback"),
+        )
+        d = _to_dict(sb)
+        expected = yaml.safe_load(load_fixture("cdk", "switch_lambda_inner.yaml"))
+        assert d == expected
+
+
+# =============================================================================
 # Mixed construction & chaining
 # =============================================================================
 

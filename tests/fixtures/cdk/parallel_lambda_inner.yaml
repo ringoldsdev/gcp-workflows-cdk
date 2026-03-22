@@ -1,0 +1,15 @@
+- parallel_work:
+    parallel:
+      branches:
+        - branch1:
+            steps:
+              - b1_step:
+                  call: sys.log
+                  args:
+                    text: branch1
+        - branch2:
+            steps:
+              - b2_step:
+                  call: sys.log
+                  args:
+                    text: branch2

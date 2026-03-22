@@ -140,7 +140,7 @@ Each method takes a `name` (step name) as its first positional argument, an opti
 
 Each sub-builder configures one step type via chaining:
 
-**`Assign`** — `.set(key, value)`, `.items(list)`, `.next(target)`, `.apply(source)`
+**`Assign`** — `.set(key, value)`, `.items(list)`, `.next(target)`, `.apply(source)`. Dot-separated keys in `.set()` are auto-unnested: `.set("a.b.c", 1)` produces `{"a": {"b": {"c": 1}}}`.
 
 **`Call(function="")`** — `.func(name)`, `.args(**kwargs)`, `.result(name)`, `.next(target)`, `.apply(source)`
 

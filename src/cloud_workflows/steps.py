@@ -57,6 +57,20 @@ __all__ = [
 # Sentinel for "not yet set" (distinct from None which may be a valid value)
 _UNSET = object()
 
+
+def _unnest_dotpath(key: str, value: Any) -> Dict[str, Any]:
+    """Convert a dot-separated key into a nested dict.
+
+    ``_unnest_dotpath("a.b.c", 1)`` returns ``{"a": {"b": {"c": 1}}}``.
+    Keys without dots are returned as ``{key: value}``.
+    """
+    parts = key.split(".")
+    result: Any = value
+    for part in reversed(parts):
+        result = {part: result}
+    return result
+
+
 _T = TypeVar("_T")
 
 
@@ -87,14 +101,20 @@ def _resolve_source(
 
 
 def _resolve_step_builder(sb: Any) -> List[Dict[str, Any]]:
-    """Convert a StepBuilder (or raw list) into a list of step dicts.
+    """Convert a StepBuilder, callable, or raw list into a list of step dicts.
 
     If ``sb`` is a StepBuilder, calls ``.build()`` and serializes each step
-    via ``model_dump(by_alias=True, exclude_none=True)``.  Otherwise returns
-    ``sb`` unchanged (assumed to already be a list of dicts).
+    via ``model_dump(by_alias=True, exclude_none=True)``.  If ``sb`` is a
+    callable (lambda), creates a new StepBuilder, passes it to the callable,
+    and resolves the result.  Otherwise returns ``sb`` unchanged (assumed to
+    already be a list of dicts).
     """
     from .builder import StepBuilder
 
+    if callable(sb) and not isinstance(sb, StepBuilder):
+        builder = StepBuilder()
+        sb(builder)
+        sb = builder
     if isinstance(sb, StepBuilder):
         return [
             {s.name: s.body.model_dump(by_alias=True, exclude_none=True)}
@@ -121,8 +141,12 @@ class Assign:
         self._next: Optional[str] = None
 
     def set(self, key: str, value: Any) -> Assign:
-        """Add a single assignment {key: value}."""
-        self._items.append({key: value})
+        """Add a single assignment.
+
+        Dot-separated keys are unnested into nested dicts:
+        ``set("a.b.c", 1)`` appends ``{"a": {"b": {"c": 1}}}``.
+        """
+        self._items.append(_unnest_dotpath(key, value))
         return self
 
     def items(self, items: List[Dict[str, Any]]) -> Assign:
@@ -383,12 +407,12 @@ class Switch:
             raise ValueError("Switch builder has no conditions — call .condition()")
         conditions = []
         for entry in self._conditions:
-            # Resolve StepBuilder in steps if present
+            # Resolve StepBuilder or callable in steps if present
             raw_steps = entry.get("steps")
-            if raw_steps is not None and hasattr(raw_steps, "build"):
+            if raw_steps is not None:
                 from .builder import StepBuilder
 
-                if isinstance(raw_steps, StepBuilder):
+                if isinstance(raw_steps, StepBuilder) or callable(raw_steps):
                     entry = dict(entry)
                     entry["steps"] = _resolve_step_builder(raw_steps)
             conditions.append(SwitchCondition(**entry))
@@ -631,10 +655,17 @@ class Try_:
 
         from .builder import StepBuilder
 
+        # Resolve callable body to StepBuilder first
+        body = self._body
+        if callable(body) and not isinstance(body, StepBuilder):
+            sb = StepBuilder()
+            body(sb)
+            body = sb
+
         # Resolve body: StepBuilder with a single call step → TryCallBody
         # StepBuilder with multiple steps → TryStepsBody
-        if isinstance(self._body, StepBuilder):
-            body_steps = self._body.build()
+        if isinstance(body, StepBuilder):
+            body_steps = body.build()
             if len(body_steps) == 1:
                 body_model = body_steps[0].body
                 if isinstance(body_model, CallStep):
@@ -644,11 +675,11 @@ class Try_:
                         result=body_model.result,
                     )
                 else:
-                    try_body = TryStepsBody(steps=_resolve_step_builder(self._body))
+                    try_body = TryStepsBody(steps=_resolve_step_builder(body))
             else:
-                try_body = TryStepsBody(steps=_resolve_step_builder(self._body))
+                try_body = TryStepsBody(steps=_resolve_step_builder(body))
         else:
-            try_body = self._body
+            try_body = body
 
         # Resolve retry
         retry = None

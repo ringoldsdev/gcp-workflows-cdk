@@ -1,0 +1,11 @@
+- try_call:
+    try:
+      call: http.get
+      args:
+        url: https://example.com
+      result: response
+    except:
+      as: e
+      steps:
+        - handle:
+            raise: "${e}"

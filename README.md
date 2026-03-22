@@ -57,6 +57,29 @@ s.assign("init", lambda a: a
 )
 ```
 
+#### Dot-path unnesting
+
+Dot-separated keys in `.set()` (and kwargs) are automatically unnested into nested dicts:
+
+```python
+# These are equivalent:
+s.assign("init", lambda a: a.set("config.http.timeout", 30).set("config.http.retries", 3))
+s.assign("init", **{"config.http.timeout": 30, "config.http.retries": 3})
+```
+
+Both produce:
+
+```yaml
+- init:
+    assign:
+      - config:
+          http:
+            timeout: 30
+      - config:
+          http:
+            retries: 3
+```
+
 ### Call
 
 ```python

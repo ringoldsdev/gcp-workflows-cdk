@@ -1,0 +1,6 @@
+- init:
+    assign:
+      - a:
+          b:
+            c: 1
+      - x: 10
