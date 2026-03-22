@@ -22,6 +22,7 @@ Usage:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import (
     Any,
     Callable,
@@ -85,6 +86,7 @@ _SwitchConditionDict = Dict[str, Any]
 __all__ = [
     "StepBuilder",
     "WorkflowBuilder",
+    "build",
 ]
 
 # All Pydantic step model types for isinstance checks
@@ -743,3 +745,78 @@ class WorkflowBuilder:
                 steps=wf_steps,
             )
         return SubworkflowsWorkflow(workflows=workflows)
+
+
+# =============================================================================
+# build() — write workflow definitions to YAML files
+# =============================================================================
+
+# Import Workflow type alias
+from .models import Workflow
+
+
+def build(
+    workflows: List[tuple[str, Workflow]],
+    output_dir: Union[str, Path] = ".",
+) -> List[Path]:
+    """Build workflow definitions and write them to YAML files.
+
+    Each entry in ``workflows`` is a ``(filename, workflow)`` tuple where
+    *filename* is a relative path (e.g. ``"my_flow.yaml"``) and *workflow*
+    is a ``SimpleWorkflow`` or ``SubworkflowsWorkflow`` instance — typically
+    produced by ``WorkflowBuilder.build()``.
+
+    Args:
+        workflows: List of ``(filename, workflow)`` pairs.
+        output_dir: Directory to write files into. Defaults to the current
+            working directory. Created automatically if it does not exist.
+
+    Returns:
+        List of ``Path`` objects for every file that was written.
+
+    Raises:
+        TypeError: If any entry is not a valid ``(str, Workflow)`` tuple.
+        ValueError: If the workflows list is empty.
+
+    Example::
+
+        from cloud_workflows import StepBuilder, WorkflowBuilder, build, expr
+
+        main = (StepBuilder()
+            .step("init", "assign", x=10, y=20)
+            .step("done", "return", value=expr("x + y")))
+
+        build([
+            ("my_workflow.yaml", WorkflowBuilder().workflow("main", main).build()),
+        ])
+    """
+    if not workflows:
+        raise ValueError("workflows list must not be empty")
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    written: List[Path] = []
+    for entry in workflows:
+        if (
+            not isinstance(entry, tuple)
+            or len(entry) != 2
+            or not isinstance(entry[0], str)
+        ):
+            raise TypeError(
+                f"Each entry must be a (str, Workflow) tuple, got {type(entry).__name__}"
+            )
+
+        filename, workflow = entry
+        if not isinstance(workflow, (SimpleWorkflow, SubworkflowsWorkflow)):
+            raise TypeError(
+                f"Workflow must be SimpleWorkflow or SubworkflowsWorkflow, "
+                f"got {type(workflow).__name__}"
+            )
+
+        path = out / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(workflow.to_yaml(), encoding="utf-8")
+        written.append(path)
+
+    return written

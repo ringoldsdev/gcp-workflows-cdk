@@ -1,4 +1,4 @@
-"""Tests for WorkflowBuilder and the run() convention.
+"""Tests for WorkflowBuilder.
 
 WorkflowBuilder composes StepBuilder(s) into SimpleWorkflow or SubworkflowsWorkflow.
 """
@@ -183,69 +183,3 @@ class TestWorkflowBuilderErrors:
     def test_empty_step_builder_raises(self):
         with pytest.raises(ValueError, match="no steps"):
             WorkflowBuilder().workflow("main", StepBuilder()).build()
-
-
-# =============================================================================
-# run() convention
-# =============================================================================
-
-
-class TestRunConvention:
-    """The run() convention: a function returning list[tuple[str, Workflow]]."""
-
-    def test_run_returns_list_of_tuples(self):
-        """Simulate what a workflow definition file's run() would return."""
-
-        def run():
-            steps = (
-                StepBuilder()
-                .step("init", "assign", x=10)
-                .step("done", "return", value=expr("x"))
-            )
-            w = WorkflowBuilder().workflow("main", steps).build()
-            return [("my_workflow.yaml", w)]
-
-        result = run()
-        assert isinstance(result, list)
-        assert len(result) == 1
-        filename, workflow = result[0]
-        assert filename == "my_workflow.yaml"
-        assert isinstance(workflow, SimpleWorkflow)
-
-    def test_run_multiple_workflows(self):
-        """A single file can define multiple output workflows."""
-
-        def run():
-            steps1 = StepBuilder().step("done", "return", value="ok")
-            steps2 = StepBuilder().step("done", "return", value="also ok")
-            return [
-                ("flow1.yaml", WorkflowBuilder().workflow("main", steps1).build()),
-                ("flow2.yaml", WorkflowBuilder().workflow("main", steps2).build()),
-            ]
-
-        result = run()
-        assert len(result) == 2
-        assert result[0][0] == "flow1.yaml"
-        assert result[1][0] == "flow2.yaml"
-
-    def test_run_with_composable_steps(self):
-        """Demonstrate composability via StepBuilder.apply()."""
-
-        def common_setup() -> StepBuilder:
-            return StepBuilder().step("setup", "assign", initialized=True)
-
-        def run():
-            steps = (
-                StepBuilder()
-                .apply(common_setup())
-                .step("done", "return", value=expr("initialized"))
-            )
-            return [
-                ("composed.yaml", WorkflowBuilder().workflow("main", steps).build())
-            ]
-
-        result = run()
-        filename, workflow = result[0]
-        assert isinstance(workflow, SimpleWorkflow)
-        d = workflow.to_dict()
-        assert d[0] == {"setup": {"assign": [{"initialized": True}]}}
