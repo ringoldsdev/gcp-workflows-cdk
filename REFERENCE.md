@@ -251,6 +251,10 @@ Python reserved words use trailing underscores as field names. Pydantic aliases 
 
 ## Architecture
 
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full builder pipeline, StepBase dict-state design, nested step resolution, and validation pipeline diagrams.
+
+### Module Map
+
 ```
 src/cloud_workflows/
     __init__.py       Public API re-exports
@@ -259,7 +263,7 @@ src/cloud_workflows/
     variables.py      Scope-based variable tracking
     parser.py         Analysis pipeline (analyze_yaml, analyze_workflow)
     builder.py        StepBuilder + WorkflowBuilder
-    steps.py          Sub-builder classes (Assign, Call, Switch, etc.)
+    steps.py          StepBase + sub-builder classes (Assign, Call, Switch, etc.)
 ```
 
 ### Processing Pipeline

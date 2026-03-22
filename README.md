@@ -378,4 +378,6 @@ TryStep(
 
 ## Reference
 
-Full API documentation, architecture details, expression parser internals, and variable analysis behavior are in [REFERENCE.md](./REFERENCE.md).
+Full API documentation, expression parser internals, and variable analysis behavior are in [REFERENCE.md](./REFERENCE.md).
+
+For the builder pipeline, StepBase dict-state architecture, and how Pydantic validation fits into the build process, see [ARCHITECTURE.md](./ARCHITECTURE.md).
