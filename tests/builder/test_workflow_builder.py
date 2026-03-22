@@ -1,19 +1,20 @@
-"""Tests for Workflow and Subworkflow.
+"""Tests for Steps finalization and multi-workflow composition.
 
-Workflow composes Subworkflow(s) or inline steps into SimpleWorkflow or
-SubworkflowsWorkflow.  Also tests backward-compatible WorkflowBuilder API.
+Steps can be finalized into SimpleWorkflow (no params) or
+SubworkflowsWorkflow (with params or multi-workflow dict).
 """
 
 import pytest
 import yaml
 
 from cloud_workflows import (
-    StepBuilder,
-    Workflow,
-    Subworkflow,
-    WorkflowBuilder,
+    Steps,
+    Assign,
+    Call,
+    Return,
     expr,
 )
+from cloud_workflows.builder import _finalize
 from cloud_workflows.models import (
     SimpleWorkflow,
     SubworkflowsWorkflow,
@@ -23,59 +24,67 @@ from conftest import load_fixture
 
 
 # =============================================================================
-# Simple workflow (single workflow, no params)
+# Simple workflow (single Steps, no params)
 # =============================================================================
 
 
 class TestSimpleWorkflow:
-    """Single workflow via Workflow inline chaining produces SimpleWorkflow."""
+    """Single Steps container produces SimpleWorkflow."""
 
-    def test_inline_chain(self):
-        w = Workflow().assign("init", x=10, y=20).returns("done", value=expr("x + y"))()
+    def test_simple_finalize(self):
+        s = Steps()
+        s("init", Assign(x=10, y=20))
+        s("done", Return(expr("x + y")))
+        w = s._finalize()
         assert isinstance(w, SimpleWorkflow)
         expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
         assert w.to_dict() == expected
 
-    def test_single_main_with_params_produces_subworkflows(self):
-        """Even a single workflow gets SubworkflowsWorkflow if it has params."""
-        main = Subworkflow(params=["input"]).returns("done", value="ok")
-        w = Workflow({"main": main}).build()
+    def test_with_params_produces_subworkflows(self):
+        """Steps with params produces SubworkflowsWorkflow even for single workflow."""
+        s = Steps(params=["input"])
+        s("done", Return("ok"))
+        w = s._finalize()
         assert isinstance(w, SubworkflowsWorkflow)
 
 
 # =============================================================================
-# Workflow with dict of Subworkflows
+# Multi-workflow (dict of Steps)
 # =============================================================================
 
 
-class TestSubworkflows:
-    """Multiple Subworkflows produce SubworkflowsWorkflow."""
+class TestMultiWorkflow:
+    """Dict of Steps produces SubworkflowsWorkflow."""
 
-    def test_two_subworkflows(self):
-        main = (
-            Subworkflow()
-            .call(
-                "call_helper",
-                func="helper",
-                args={"input": "test"},
-                result="res",
-            )
-            .returns("done", value=expr("res"))
+    def test_two_workflows(self):
+        main = Steps()
+        main(
+            "call_helper",
+            Call("helper", args={"input": "test"}, result="res"),
         )
-        helper = (
-            Subworkflow(params=["input"])
-            .call("log", func="sys.log", args={"text": expr("input")})
-            .returns("done", value="ok")
-        )
-        w = Workflow({"main": main, "helper": helper})()
+        main("done", Return(expr("res")))
+
+        helper = Steps(params=["input"])
+        helper("log", Call("sys.log", args={"text": expr("input")}))
+        helper("done", Return("ok"))
+
+        w = _finalize({"main": main, "helper": helper})
         assert isinstance(w, SubworkflowsWorkflow)
         expected = yaml.safe_load(load_fixture("cdk", "subworkflows.yaml"))
         assert w.to_dict() == expected
 
+    def test_single_main_no_params(self):
+        """Single 'main' without params → SimpleWorkflow."""
+        main = Steps()
+        main("done", Return("ok"))
+        w = _finalize({"main": main})
+        assert isinstance(w, SimpleWorkflow)
+
     def test_non_main_single_workflow(self):
-        """Single workflow not named 'main' produces SubworkflowsWorkflow."""
-        helper = Subworkflow().returns("done", value="ok")
-        w = Workflow({"helper": helper})()
+        """Single workflow not named 'main' → SubworkflowsWorkflow."""
+        helper = Steps()
+        helper("done", Return("ok"))
+        w = _finalize({"helper": helper})
         assert isinstance(w, SubworkflowsWorkflow)
 
 
@@ -85,21 +94,25 @@ class TestSubworkflows:
 
 
 class TestRoundTrip:
-    """Build -> YAML -> parse -> compare."""
+    """Build → YAML → parse → compare."""
 
     def test_simple_round_trip(self):
-        w1 = Workflow().assign("init", x=10).returns("done", value=expr("x"))()
+        s = Steps()
+        s("init", Assign(x=10))
+        s("done", Return(expr("x")))
+        w1 = s._finalize()
         w2 = parse_workflow(w1.to_yaml())
         assert w1.to_dict() == w2.to_dict()
 
-    def test_subworkflows_round_trip(self):
-        main = (
-            Subworkflow()
-            .call("s1", func="helper", result="r")
-            .returns("s2", value=expr("r"))
-        )
-        helper = Subworkflow().returns("s1", value="ok")
-        w1 = Workflow({"main": main, "helper": helper})()
+    def test_multi_workflow_round_trip(self):
+        main = Steps()
+        main("s1", Call("helper", result="r"))
+        main("s2", Return(expr("r")))
+
+        helper = Steps()
+        helper("s1", Return("ok"))
+
+        w1 = _finalize({"main": main, "helper": helper})
         w2 = parse_workflow(w1.to_yaml())
         assert w1.to_dict() == w2.to_dict()
 
@@ -109,124 +122,23 @@ class TestRoundTrip:
 # =============================================================================
 
 
-class TestWorkflowErrors:
-    """Error handling for Workflow."""
+class TestErrors:
+    """Error handling for finalization."""
 
-    def test_no_steps_and_no_dict_raises(self):
-        with pytest.raises(ValueError):
-            Workflow()()
+    def test_empty_steps_raises(self):
+        s = Steps()
+        with pytest.raises(ValueError, match="No steps"):
+            s._finalize()
 
-    def test_empty_inline_chain_raises(self):
-        """Workflow with no steps added inline should raise."""
-        with pytest.raises(ValueError):
-            Workflow()()
-
-    def test_both_inline_and_dict_raises(self):
-        """Cannot have both inline steps and a subworkflow dict."""
-        sub = Subworkflow().returns("done", value="ok")
-        w = Workflow({"main": sub})
-        w.assign("init", x=1)
-        with pytest.raises(ValueError):
-            w()
-
-    def test_empty_subworkflow_raises(self):
+    def test_empty_workflow_in_dict_raises(self):
+        main = Steps()
         with pytest.raises(ValueError, match="no steps"):
-            Workflow({"main": Subworkflow()})()
+            _finalize({"main": main})
 
+    def test_wrong_type_in_dict_raises(self):
+        with pytest.raises(TypeError, match="Steps instances"):
+            _finalize({"main": "not steps"})  # type: ignore[dict-item]
 
-# =============================================================================
-# Backward compat: WorkflowBuilder
-# =============================================================================
-
-
-class TestWorkflowBuilderBackwardCompat:
-    """WorkflowBuilder still works for backward compatibility."""
-
-    def test_simple_workflow(self):
-        steps = (
-            StepBuilder()
-            .assign("init", x=10, y=20)
-            .returns("done", value=expr("x + y"))
-        )
-        w = WorkflowBuilder().workflow("main", steps).build()
-        assert isinstance(w, SimpleWorkflow)
-        expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
-        assert w.to_dict() == expected
-
-    def test_steps_shorthand(self):
-        sb = (
-            StepBuilder()
-            .assign("init", x=10, y=20)
-            .returns("done", value=expr("x + y"))
-        )
-        w = WorkflowBuilder().steps(sb).build()
-        assert isinstance(w, SimpleWorkflow)
-        expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
-        assert w.to_dict() == expected
-
-    def test_steps_with_lambda(self):
-        w = (
-            WorkflowBuilder()
-            .steps(
-                lambda s: s.assign("init", x=10, y=20).returns(
-                    "done", value=expr("x + y")
-                )
-            )
-            .build()
-        )
-        assert isinstance(w, SimpleWorkflow)
-        expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
-        assert w.to_dict() == expected
-
-    def test_workflow_with_lambda(self):
-        w = (
-            WorkflowBuilder()
-            .workflow(
-                "main",
-                lambda s: s.assign("init", x=10).returns("done", value=expr("x")),
-            )
-            .build()
-        )
-        assert isinstance(w, SimpleWorkflow)
-        d = w.to_dict()
-        assert d[0] == {"init": {"assign": [{"x": 10}]}}
-        assert d[1] == {"done": {"return": "${x}"}}
-
-    def test_no_workflows_raises(self):
-        with pytest.raises(ValueError, match="No workflows"):
-            WorkflowBuilder().build()
-
-    def test_duplicate_workflow_name_raises(self):
-        steps = StepBuilder().assign("s1", x=1)
-        with pytest.raises(ValueError, match="Duplicate workflow name"):
-            (WorkflowBuilder().workflow("main", steps).workflow("main", steps))
-
-    def test_empty_step_builder_raises(self):
-        with pytest.raises(ValueError, match="no steps"):
-            WorkflowBuilder().workflow("main", StepBuilder()).build()
-
-
-# =============================================================================
-# Chaining
-# =============================================================================
-
-
-class TestWorkflowChaining:
-    """Test that chaining returns self correctly."""
-
-    def test_raw_returns_builder(self):
-        b = StepBuilder()
-        result = b.raw("s1", {"assign": [{"x": 1}]})
-        assert result is b
-
-    def test_workflow_inline_chain(self):
-        w = (
-            Workflow()
-            .raw("s1", {"assign": [{"a": 1}]})
-            .raw("s2", {"assign": [{"b": 2}]})
-            .raw("s3", {"assign": [{"c": 3}]})
-            .raw("s4", {"assign": [{"d": 4}]})
-            .raw("s5", {"return": "${a + b + c + d}"})
-        )()
-        assert isinstance(w, SimpleWorkflow)
-        assert len(w.steps) == 5
+    def test_wrong_type_raises(self):
+        with pytest.raises(TypeError):
+            _finalize(42)  # type: ignore[arg-type]

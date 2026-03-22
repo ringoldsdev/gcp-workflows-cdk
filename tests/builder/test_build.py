@@ -1,8 +1,8 @@
 """Tests for the build() function.
 
 build() accepts a dict of {filename: workflow} and writes YAML files.
-Workflow values can be finalized models or unfinalized Workflow builders
-(auto-finalized by calling them).
+Workflow values can be finalized models, Steps instances, or
+dicts of Steps (for multi-workflow files).
 """
 
 import pytest
@@ -10,9 +10,10 @@ import yaml
 from pathlib import Path
 
 from cloud_workflows import (
-    StepBuilder,
-    Workflow,
-    Subworkflow,
+    Steps,
+    Assign,
+    Call,
+    Return,
     build,
     expr,
 )
@@ -29,48 +30,42 @@ class TestBuildWritesFiles:
     """build() writes YAML files to disk."""
 
     def test_single_workflow(self, tmp_path):
-        w = Workflow().assign("init", x=10, y=20).returns("done", value=expr("x + y"))()
+        s = Steps()
+        s("init", Assign(x=10, y=20))
+        s("done", Return(expr("x + y")))
 
-        written = build({"simple.yaml": w}, output_dir=tmp_path)
+        written = build({"simple.yaml": s}, output_dir=tmp_path)
 
         assert len(written) == 1
         assert written[0] == tmp_path / "simple.yaml"
         assert written[0].exists()
 
-        # Use cdk/ fixture (was build/simple.yaml, byte-identical)
         expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
         actual = yaml.safe_load(written[0].read_text(encoding="utf-8"))
         assert actual == expected
 
     def test_multiple_workflows(self, tmp_path):
-        main = (
-            Subworkflow()
-            .call(
-                "call_helper",
-                func="helper",
-                args={"input": "test"},
-                result="res",
-            )
-            .returns("done", value=expr("res"))
-        )
-        helper = (
-            Subworkflow(params=["input"])
-            .call("log", func="sys.log", args={"text": expr("input")})
-            .returns("done", value="ok")
-        )
-        multi = Workflow({"main": main, "helper": helper})()
+        main = Steps()
+        main("call_helper", Call("helper", args={"input": "test"}, result="res"))
+        main("done", Return(expr("res")))
 
-        second = Workflow().returns("done", value="ok")()
+        helper = Steps(params=["input"])
+        helper("log", Call("sys.log", args={"text": expr("input")}))
+        helper("done", Return("ok"))
+
+        multi_dict = {"main": main, "helper": helper}
+
+        second = Steps()
+        second("done", Return("ok"))
 
         written = build(
-            {"multi.yaml": multi, "second.yaml": second},
+            {"multi.yaml": multi_dict, "second.yaml": second},
             output_dir=tmp_path,
         )
 
         assert len(written) == 2
         assert all(p.exists() for p in written)
 
-        # Use cdk/ fixture (was build/multi.yaml, byte-identical)
         expected_multi = yaml.safe_load(load_fixture("cdk", "subworkflows.yaml"))
         actual_multi = yaml.safe_load(
             (tmp_path / "multi.yaml").read_text(encoding="utf-8")
@@ -84,9 +79,10 @@ class TestBuildWritesFiles:
         assert actual_second == expected_second
 
     def test_returns_path_objects(self, tmp_path):
-        w = Workflow().returns("done", value="ok")()
+        s = Steps()
+        s("done", Return("ok"))
 
-        written = build({"out.yaml": w}, output_dir=tmp_path)
+        written = build({"out.yaml": s}, output_dir=tmp_path)
 
         assert isinstance(written, list)
         assert all(isinstance(p, Path) for p in written)
@@ -104,35 +100,39 @@ class TestBuildOutputDir:
         nested = tmp_path / "a" / "b" / "c"
         assert not nested.exists()
 
-        w = Workflow().returns("done", value="ok")()
+        s = Steps()
+        s("done", Return("ok"))
 
-        build({"out.yaml": w}, output_dir=nested)
+        build({"out.yaml": s}, output_dir=nested)
 
         assert nested.exists()
         assert (nested / "out.yaml").exists()
 
     def test_creates_subdirectory_in_filename(self, tmp_path):
         """Filenames with path separators create subdirectories."""
-        w = Workflow().returns("done", value="ok")()
+        s = Steps()
+        s("done", Return("ok"))
 
-        build({"sub/dir/out.yaml": w}, output_dir=tmp_path)
+        build({"sub/dir/out.yaml": s}, output_dir=tmp_path)
 
         assert (tmp_path / "sub" / "dir" / "out.yaml").exists()
 
     def test_defaults_to_current_dir(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
 
-        w = Workflow().returns("done", value="ok")()
+        s = Steps()
+        s("done", Return("ok"))
 
-        written = build({"default_dir.yaml": w})
+        written = build({"default_dir.yaml": s})
 
         assert (tmp_path / "default_dir.yaml").exists()
         assert written[0] == Path(".") / "default_dir.yaml"
 
     def test_accepts_string_output_dir(self, tmp_path):
-        w = Workflow().returns("done", value="ok")()
+        s = Steps()
+        s("done", Return("ok"))
 
-        build({"out.yaml": w}, output_dir=str(tmp_path))
+        build({"out.yaml": s}, output_dir=str(tmp_path))
 
         assert (tmp_path / "out.yaml").exists()
 
@@ -146,9 +146,11 @@ class TestBuildYamlContent:
     """build() produces correct YAML content."""
 
     def test_simple_workflow_yaml(self, tmp_path):
-        w = Workflow().assign("init", x=10, y=20).returns("done", value=expr("x + y"))()
+        s = Steps()
+        s("init", Assign(x=10, y=20))
+        s("done", Return(expr("x + y")))
 
-        build({"flow.yaml": w}, output_dir=tmp_path)
+        build({"flow.yaml": s}, output_dir=tmp_path)
 
         content = (tmp_path / "flow.yaml").read_text(encoding="utf-8")
         parsed = yaml.safe_load(content)
@@ -156,11 +158,16 @@ class TestBuildYamlContent:
         assert parsed[1] == {"done": {"return": "${x + y}"}}
 
     def test_subworkflows_yaml(self, tmp_path):
-        main = Subworkflow().returns("done", value="ok")
-        helper = Subworkflow(params=["n"]).returns("done", value="also ok")
-        w = Workflow({"main": main, "helper": helper})()
+        main = Steps()
+        main("done", Return("ok"))
 
-        build({"sub.yaml": w}, output_dir=tmp_path)
+        helper = Steps(params=["n"])
+        helper("done", Return("also ok"))
+
+        build(
+            {"sub.yaml": {"main": main, "helper": helper}},
+            output_dir=tmp_path,
+        )
 
         content = (tmp_path / "sub.yaml").read_text(encoding="utf-8")
         parsed = yaml.safe_load(content)
@@ -169,12 +176,15 @@ class TestBuildYamlContent:
         assert parsed["helper"]["params"] == ["n"]
 
     def test_round_trip_through_build(self, tmp_path):
-        """Build to file, read back, parse -- should match original."""
+        """Build to file, read back, parse — should match original."""
         from cloud_workflows.models import parse_workflow
 
-        w1 = Workflow().assign("init", x=42).returns("done", value=expr("x"))()
+        s = Steps()
+        s("init", Assign(x=42))
+        s("done", Return(expr("x")))
+        w1 = s._finalize()
 
-        build({"rt.yaml": w1}, output_dir=tmp_path)
+        build({"rt.yaml": s}, output_dir=tmp_path)
 
         w2 = parse_workflow((tmp_path / "rt.yaml").read_text(encoding="utf-8"))
         assert w1.to_dict() == w2.to_dict()
@@ -186,30 +196,30 @@ class TestBuildYamlContent:
 
 
 class TestBuildAutoFinalize:
-    """build() auto-finalizes unfinalized Workflow builder instances."""
+    """build() auto-finalizes Steps and dict-of-Steps."""
 
     def test_auto_finalize_simple(self, tmp_path):
-        """Passing an unfinalized Workflow directly to build()."""
-        written = build(
-            {
-                "auto.yaml": Workflow()
-                .assign("init", x=1)
-                .returns("done", value=expr("x"))
-            },
-            output_dir=tmp_path,
-        )
+        """Passing a Steps instance directly to build()."""
+        s = Steps()
+        s("init", Assign(x=1))
+        s("done", Return(expr("x")))
+
+        written = build({"auto.yaml": s}, output_dir=tmp_path)
 
         content = yaml.safe_load(written[0].read_text(encoding="utf-8"))
         assert content[0] == {"init": {"assign": [{"x": 1}]}}
         assert content[1] == {"done": {"return": "${x}"}}
 
     def test_auto_finalize_multi(self, tmp_path):
-        """Passing an unfinalized multi-workflow Workflow."""
-        main = Subworkflow().returns("done", value="ok")
-        helper = Subworkflow(params=["n"]).returns("done", value=expr("n"))
+        """Passing a dict of Steps for multi-workflow."""
+        main = Steps()
+        main("done", Return("ok"))
+
+        helper = Steps(params=["n"])
+        helper("done", Return(expr("n")))
 
         written = build(
-            {"multi.yaml": Workflow({"main": main, "helper": helper})},
+            {"multi.yaml": {"main": main, "helper": helper}},
             output_dir=tmp_path,
         )
 
@@ -217,44 +227,23 @@ class TestBuildAutoFinalize:
         assert "main" in content
         assert "helper" in content
 
-    def test_mix_finalized_and_unfinalized(self, tmp_path):
-        """Dict can contain both finalized models and unfinalized builders."""
-        finalized = Workflow().returns("done", value="ok")()
-        unfinalized = Workflow().assign("init", x=1).returns("done", value=expr("x"))
+    def test_mix_finalized_and_steps(self, tmp_path):
+        """Dict can contain both finalized models and Steps instances."""
+        s1 = Steps()
+        s1("done", Return("ok"))
+        finalized = s1._finalize()
+
+        s2 = Steps()
+        s2("init", Assign(x=1))
+        s2("done", Return(expr("x")))
 
         written = build(
-            {"a.yaml": finalized, "b.yaml": unfinalized},
+            {"a.yaml": finalized, "b.yaml": s2},
             output_dir=tmp_path,
         )
 
         assert len(written) == 2
         assert all(p.exists() for p in written)
-
-
-# =============================================================================
-# Workflow callable
-# =============================================================================
-
-
-class TestWorkflowCallable:
-    """Workflow instances can be called to finalize."""
-
-    def test_call_returns_simple_workflow(self):
-        w = Workflow().assign("init", x=10).returns("done", value=expr("x"))()
-        assert isinstance(w, SimpleWorkflow)
-
-    def test_call_returns_subworkflows_workflow(self):
-        main = Subworkflow().returns("done", value="ok")
-        helper = Subworkflow(params=["n"]).returns("done", value=expr("n"))
-        w = Workflow({"main": main, "helper": helper})()
-        assert isinstance(w, SubworkflowsWorkflow)
-
-    def test_call_same_as_build(self):
-        """() and .build() produce identical results."""
-        w1 = Workflow().assign("init", x=10).returns("done", value=expr("x"))
-        w2 = Workflow().assign("init", x=10).returns("done", value=expr("x"))
-
-        assert w1().to_dict() == w2.build().to_dict()
 
 
 # =============================================================================
@@ -274,34 +263,37 @@ class TestBuildErrors:
             build([("a.yaml", "b")], output_dir=tmp_path)  # type: ignore[arg-type]
 
     def test_non_string_key_raises(self, tmp_path):
-        w = Workflow().returns("done", value="ok")()
+        s = Steps()
+        s("done", Return("ok"))
         with pytest.raises(TypeError, match="filename must be a string"):
-            build({123: w}, output_dir=tmp_path)  # type: ignore[dict-item]
+            build({123: s}, output_dir=tmp_path)  # type: ignore[dict-item]
 
     def test_non_workflow_value_raises(self, tmp_path):
-        with pytest.raises(TypeError, match="Workflow"):
-            build({"out.yaml": {"not": "a workflow"}}, output_dir=tmp_path)  # type: ignore[dict-item]
+        with pytest.raises(TypeError):
+            build({"out.yaml": "not a workflow"}, output_dir=tmp_path)  # type: ignore[dict-item]
 
 
 # =============================================================================
-# Composability (replaces old TestRunConvention)
+# Composability
 # =============================================================================
 
 
 class TestBuildComposability:
-    """build() works with composable step builders and helper functions."""
+    """build() works with composable step sequences."""
 
     def test_composable_steps(self, tmp_path):
-        """Demonstrate composability via StepBuilder.apply()."""
+        """Demonstrate composability via Steps merging."""
 
-        def common_setup() -> StepBuilder:
-            return StepBuilder().assign("setup", initialized=True)
+        def common_setup() -> Steps:
+            s = Steps()
+            s("setup", Assign(initialized=True))
+            return s
 
-        w = (
-            Workflow().apply(common_setup()).returns("done", value=expr("initialized"))
-        )()
+        main = Steps()
+        main(common_setup())
+        main("done", Return(expr("initialized")))
 
-        written = build({"composed.yaml": w}, output_dir=tmp_path)
+        written = build({"composed.yaml": main}, output_dir=tmp_path)
 
         content = yaml.safe_load(written[0].read_text(encoding="utf-8"))
         assert content[0] == {"setup": {"assign": [{"initialized": True}]}}
@@ -310,8 +302,10 @@ class TestBuildComposability:
         """A factory function can produce the full workflows dict."""
 
         def define_workflows():
-            w = Workflow().assign("init", x=10).returns("done", value=expr("x"))()
-            return {"flow.yaml": w}
+            s = Steps()
+            s("init", Assign(x=10))
+            s("done", Return(expr("x")))
+            return {"flow.yaml": s}
 
         written = build(define_workflows(), output_dir=tmp_path)
 
