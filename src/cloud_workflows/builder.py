@@ -1,34 +1,34 @@
 """Steps container and build() function for Cloud Workflows CDK.
 
 ``Steps`` is the universal container for workflow steps.  Steps are added
-via the ``__call__`` protocol::
+via the ``.step()`` method which supports chaining::
 
     s = Steps()
-    s("init", Assign(x=10, y=20))
-    s("log", Call("sys.log", args={"text": expr("x")}))
-    s("done", Return(expr("x + y")))
+    s.step("init", Assign(x=10, y=20))
+     .step("log", Call("sys.log", args={"text": expr("x")}))
+     .step("done", Return(expr("x + y")))
 
 ``Steps`` instances are composable — merging steps from another container::
 
     common = Steps()
-    common("log", Call("sys.log", args={"text": "starting"}))
+    common.step("log", Call("sys.log", args={"text": "starting"}))
 
     main = Steps()
-    main(common)               # merges all steps from common
-    main("done", Return("ok"))
+    main.merge(common)                # merges all steps from common
+    main.step("done", Return("ok"))
 
 For subworkflows with parameters, pass ``params`` to the constructor::
 
     helper = Steps(params=["input", {"timeout": 30}])
-    helper("log", Call("sys.log", args={"text": expr("input")}))
-    helper("done", Return("ok"))
+    helper.step("log", Call("sys.log", args={"text": expr("input")}))
+    helper.step("done", Return("ok"))
 
 Write to disk with ``build()``::
 
-    build({"workflow.yaml": main})
+    build({"workflow.yaml": {"main": main}})
 
-If ``main`` is a ``Steps`` instance, ``build()`` auto-finalizes it into
-a ``SimpleWorkflow`` or ``SubworkflowsWorkflow``.
+``build()`` always requires a ``dict[str, Steps]`` with a ``"main"`` key
+for each file entry.
 """
 
 from __future__ import annotations
@@ -64,10 +64,15 @@ __all__ = [
 class Steps:
     """Universal container for workflow steps.
 
-    Steps are added via the ``__call__`` protocol, which is overloaded:
+    Steps are added via the ``.step()`` method, which returns ``self``
+    for chaining::
 
-    * ``s("step_id", StepType)`` — add a single named step.
-    * ``s(other_steps)`` — merge all steps from another ``Steps`` instance.
+        s = Steps()
+        s.step("init", Assign(x=10)).step("done", Return("ok"))
+
+    Merge steps from another container via ``.merge()``::
+
+        s.merge(other_steps)
 
     Optional ``params`` makes this container a subworkflow with parameters.
 
@@ -84,41 +89,36 @@ class Steps:
         self._steps: List[tuple[str, StepType]] = []
         self._params = params
 
-    def __call__(
-        self,
-        step_id_or_steps: Union[str, "Steps"],
-        step: Optional[StepType] = None,
-    ) -> None:
-        """Add a step or merge steps from another container.
+    def step(self, step_id: str, step: StepType) -> "Steps":
+        """Add a named step and return ``self`` for chaining.
 
-        Overloaded forms:
+        Args:
+            step_id: Unique identifier for this step.
+            step: A ``StepType`` instance (Assign, Call, Return, etc.).
 
-        * ``s("step_id", StepType)`` — add a named step.
-        * ``s(other_steps)`` — merge all steps from another Steps container.
+        Returns:
+            ``self`` for method chaining.
         """
-        if isinstance(step_id_or_steps, Steps):
-            if step is not None:
-                raise TypeError(
-                    "When merging Steps, pass only the Steps instance "
-                    "(no second argument)"
-                )
-            self._steps.extend(step_id_or_steps._steps)
-            return
+        if not isinstance(step_id, str):
+            raise TypeError(f"step_id must be a string, got {type(step_id).__name__}")
+        if not isinstance(step, StepType):
+            raise TypeError(f"Expected a StepType instance, got {type(step).__name__}")
+        self._steps.append((step_id, step))
+        return self
 
-        if isinstance(step_id_or_steps, str):
-            if step is None:
-                raise TypeError(f"Missing step type for step '{step_id_or_steps}'")
-            if not isinstance(step, StepType):
-                raise TypeError(
-                    f"Expected a StepType instance, got {type(step).__name__}"
-                )
-            self._steps.append((step_id_or_steps, step))
-            return
+    def merge(self, other: "Steps") -> "Steps":
+        """Merge all steps from another Steps container and return ``self``.
 
-        raise TypeError(
-            f"Expected step_id (str) or Steps instance, "
-            f"got {type(step_id_or_steps).__name__}"
-        )
+        Args:
+            other: Another ``Steps`` instance whose steps will be appended.
+
+        Returns:
+            ``self`` for method chaining.
+        """
+        if not isinstance(other, Steps):
+            raise TypeError(f"Expected a Steps instance, got {type(other).__name__}")
+        self._steps.extend(other._steps)
+        return self
 
     def build(self) -> List[Dict[str, Any]]:
         """Serialize all steps to a list of dicts for YAML output.
@@ -161,22 +161,18 @@ class Steps:
 
 
 def build(
-    workflows: Dict[str, Union[WorkflowModel, Steps, Dict[str, Steps]]],
+    workflows: Dict[str, Union[Dict[str, Steps]]],
     output_dir: Union[str, Path] = ".",
 ) -> List[Path]:
     """Build workflow definitions and write them to YAML files.
 
-    ``workflows`` is a dict mapping filenames to workflow objects.
+    ``workflows`` is a dict mapping filenames to workflow dicts.
 
-    Values can be:
-
-    * A finalized model (``SimpleWorkflow`` or ``SubworkflowsWorkflow``).
-    * A ``Steps`` instance (auto-finalized into ``SimpleWorkflow``).
-    * A dict of ``{name: Steps}`` for multi-workflow files
-      (auto-finalized into ``SubworkflowsWorkflow``).
+    Each value must be a ``dict[str, Steps]`` mapping workflow names to
+    Steps containers.  A ``"main"`` key is required.
 
     Args:
-        workflows: Dict of ``{filename: workflow}``.
+        workflows: Dict of ``{filename: {name: Steps}}``.
         output_dir: Directory to write files into. Defaults to ``"."``.
 
     Returns:
@@ -185,16 +181,16 @@ def build(
     Example::
 
         s = Steps()
-        s("init", Assign(x=10))
-        s("done", Return(expr("x")))
-        build({"flow.yaml": s})
+        s.step("init", Assign(x=10))
+        s.step("done", Return(expr("x")))
+        build({"flow.yaml": {"main": s}})
 
         # Multi-workflow:
         main = Steps()
-        main("call", Call("helper", result="r"))
-        main("done", Return(expr("r")))
+        main.step("call", Call("helper", result="r"))
+        main.step("done", Return(expr("r")))
         helper = Steps(params=["input"])
-        helper("done", Return("ok"))
+        helper.step("done", Return("ok"))
         build({"flow.yaml": {"main": main, "helper": helper}})
     """
     if not workflows:
@@ -214,17 +210,11 @@ def build(
             )
 
         # Auto-finalize
-        workflow = _finalize(workflow)
-
-        if not isinstance(workflow, (SimpleWorkflow, SubworkflowsWorkflow)):
-            raise TypeError(
-                f"Workflow value must be SimpleWorkflow, SubworkflowsWorkflow, "
-                f"Steps, or dict of Steps, got {type(workflow).__name__}"
-            )
+        workflow_model = _finalize(workflow)
 
         path = out / filename
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(workflow.to_yaml(), encoding="utf-8")
+        path.write_text(workflow_model.to_yaml(), encoding="utf-8")
         written.append(path)
 
     return written
@@ -235,42 +225,33 @@ def _finalize(
 ) -> Union[SimpleWorkflow, SubworkflowsWorkflow]:
     """Convert a build() value to a finalized workflow model.
 
-    Handles:
-    - Already-finalized models (passthrough).
-    - ``Steps`` instances (single workflow).
-    - ``dict[str, Steps]`` (multi-workflow).
+    Accepts a ``dict[str, Steps]`` with a required ``"main"`` key.
     """
-    if isinstance(value, (SimpleWorkflow, SubworkflowsWorkflow)):
-        return value
+    if not isinstance(value, dict):
+        raise TypeError(f"Expected dict[str, Steps], got {type(value).__name__}")
 
-    if isinstance(value, Steps):
-        return value._finalize()
+    if "main" not in value:
+        raise ValueError("Workflow dict must contain a 'main' key")
 
-    if isinstance(value, dict):
-        # Dict of name -> Steps for multi-workflow
-        workflows: Dict[str, WorkflowDefinition] = {}
-        for name, steps in value.items():
-            if not isinstance(steps, Steps):
-                raise TypeError(
-                    f"Multi-workflow dict values must be Steps instances, "
-                    f"got {type(steps).__name__} for key '{name}'"
-                )
-            if not steps._steps:
-                raise ValueError(f"Workflow '{name}' has no steps")
-            workflows[name] = WorkflowDefinition(
-                params=steps._params,
-                steps=steps.build(),
+    # Dict of name -> Steps for multi-workflow
+    workflows: Dict[str, WorkflowDefinition] = {}
+    for name, steps in value.items():
+        if not isinstance(steps, Steps):
+            raise TypeError(
+                f"Multi-workflow dict values must be Steps instances, "
+                f"got {type(steps).__name__} for key '{name}'"
             )
+        if not steps._steps:
+            raise ValueError(f"Workflow '{name}' has no steps")
+        workflows[name] = WorkflowDefinition(
+            params=steps._params,
+            steps=steps.build(),
+        )
 
-        # Single 'main' without params → SimpleWorkflow
-        if len(workflows) == 1 and "main" in workflows:
-            main_wf = workflows["main"]
-            if main_wf.params is None:
-                return SimpleWorkflow(steps=main_wf.steps)
+    # Single 'main' without params → SimpleWorkflow
+    if len(workflows) == 1 and "main" in workflows:
+        main_wf = workflows["main"]
+        if main_wf.params is None:
+            return SimpleWorkflow(steps=main_wf.steps)
 
-        return SubworkflowsWorkflow(workflows=workflows)
-
-    raise TypeError(
-        f"Expected SimpleWorkflow, SubworkflowsWorkflow, Steps, or dict, "
-        f"got {type(value).__name__}"
-    )
+    return SubworkflowsWorkflow(workflows=workflows)

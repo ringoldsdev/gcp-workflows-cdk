@@ -33,8 +33,8 @@ class TestSimpleWorkflow:
 
     def test_simple_finalize(self):
         s = Steps()
-        s("init", Assign(x=10, y=20))
-        s("done", Return(expr("x + y")))
+        s.step("init", Assign(x=10, y=20))
+        s.step("done", Return(expr("x + y")))
         w = s._finalize()
         assert isinstance(w, SimpleWorkflow)
         expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
@@ -43,7 +43,7 @@ class TestSimpleWorkflow:
     def test_with_params_produces_subworkflows(self):
         """Steps with params produces SubworkflowsWorkflow even for single workflow."""
         s = Steps(params=["input"])
-        s("done", Return("ok"))
+        s.step("done", Return("ok"))
         w = s._finalize()
         assert isinstance(w, SubworkflowsWorkflow)
 
@@ -58,15 +58,15 @@ class TestMultiWorkflow:
 
     def test_two_workflows(self):
         main = Steps()
-        main(
+        main.step(
             "call_helper",
             Call("helper", args={"input": "test"}, result="res"),
         )
-        main("done", Return(expr("res")))
+        main.step("done", Return(expr("res")))
 
         helper = Steps(params=["input"])
-        helper("log", Call("sys.log", args={"text": expr("input")}))
-        helper("done", Return("ok"))
+        helper.step("log", Call("sys.log", args={"text": expr("input")}))
+        helper.step("done", Return("ok"))
 
         w = _finalize({"main": main, "helper": helper})
         assert isinstance(w, SubworkflowsWorkflow)
@@ -74,18 +74,18 @@ class TestMultiWorkflow:
         assert w.to_dict() == expected
 
     def test_single_main_no_params(self):
-        """Single 'main' without params → SimpleWorkflow."""
+        """Single 'main' without params -> SimpleWorkflow."""
         main = Steps()
-        main("done", Return("ok"))
+        main.step("done", Return("ok"))
         w = _finalize({"main": main})
         assert isinstance(w, SimpleWorkflow)
 
-    def test_non_main_single_workflow(self):
-        """Single workflow not named 'main' → SubworkflowsWorkflow."""
+    def test_non_main_requires_main_key(self):
+        """Dict without 'main' key raises ValueError."""
         helper = Steps()
-        helper("done", Return("ok"))
-        w = _finalize({"helper": helper})
-        assert isinstance(w, SubworkflowsWorkflow)
+        helper.step("done", Return("ok"))
+        with pytest.raises(ValueError, match="'main' key"):
+            _finalize({"helper": helper})
 
 
 # =============================================================================
@@ -94,23 +94,23 @@ class TestMultiWorkflow:
 
 
 class TestRoundTrip:
-    """Build → YAML → parse → compare."""
+    """Build -> YAML -> parse -> compare."""
 
     def test_simple_round_trip(self):
         s = Steps()
-        s("init", Assign(x=10))
-        s("done", Return(expr("x")))
+        s.step("init", Assign(x=10))
+        s.step("done", Return(expr("x")))
         w1 = s._finalize()
         w2 = parse_workflow(w1.to_yaml())
         assert w1.to_dict() == w2.to_dict()
 
     def test_multi_workflow_round_trip(self):
         main = Steps()
-        main("s1", Call("helper", result="r"))
-        main("s2", Return(expr("r")))
+        main.step("s1", Call("helper", result="r"))
+        main.step("s2", Return(expr("r")))
 
         helper = Steps()
-        helper("s1", Return("ok"))
+        helper.step("s1", Return("ok"))
 
         w1 = _finalize({"main": main, "helper": helper})
         w2 = parse_workflow(w1.to_yaml())
@@ -142,3 +142,10 @@ class TestErrors:
     def test_wrong_type_raises(self):
         with pytest.raises(TypeError):
             _finalize(42)  # type: ignore[arg-type]
+
+    def test_missing_main_key_raises(self):
+        """Dict without 'main' key raises ValueError."""
+        helper = Steps()
+        helper.step("done", Return("ok"))
+        with pytest.raises(ValueError, match="'main' key"):
+            _finalize({"helper": helper})

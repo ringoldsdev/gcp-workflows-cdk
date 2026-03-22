@@ -2,12 +2,12 @@
 
 Each step class represents a GCP Workflows step type. Instances are
 immutable descriptions of a step's configuration. They are added to a
-``Steps`` container via its ``__call__`` method::
+``Steps`` container via ``.step()``::
 
     s = Steps()
-    s("init", Assign(x=10, y=20))
-    s("log", Call("sys.log", args={"text": expr("x")}))
-    s("done", Return(expr("x + y")))
+    s.step("init", Assign(x=10, y=20))
+     .step("log", Call("sys.log", args={"text": expr("x")}))
+     .step("done", Return(expr("x + y")))
 
 Step classes:
     Assign      — variable assignment
@@ -32,7 +32,6 @@ from jsonpath_ng import parse as jp_parse
 
 from .models import (
     AssignStep,
-    BackoffConfig,
     Branch,
     CallStep,
     ExceptBody,
@@ -42,7 +41,6 @@ from .models import (
     ParallelBody,
     ParallelStep,
     RaiseStep,
-    RetryConfig,
     ReturnStep,
     Step,
     SwitchCondition,
@@ -51,6 +49,7 @@ from .models import (
     TryStep,
     TryStepsBody,
 )
+from .retry import Retry
 
 __all__ = [
     "StepType",
@@ -95,10 +94,12 @@ class StepType:
 
 
 def _resolve_steps(steps: Any) -> List[Dict[str, Any]]:
-    """Convert a Steps container (or raw list) to a list of step dicts.
+    """Convert a Steps container, callable, or raw list to step dicts.
 
     Accepts:
     - A ``Steps`` instance (from builder.py) → calls ``.build()``
+    - A callable (e.g. ``lambda s: s.step(...)``) → creates a fresh
+      ``Steps``, invokes the callable with it, returns ``.build()``
     - A raw ``list`` of dicts → returned as-is
     """
     # Import here to avoid circular imports
@@ -106,10 +107,15 @@ def _resolve_steps(steps: Any) -> List[Dict[str, Any]]:
 
     if isinstance(steps, Steps):
         return steps.build()
+    if callable(steps):
+        s = Steps()
+        steps(s)
+        return s.build()
     if isinstance(steps, list):
         return steps
     raise TypeError(
-        f"Expected Steps instance or list of dicts, got {type(steps).__name__}"
+        f"Expected Steps instance, callable, or list of dicts, "
+        f"got {type(steps).__name__}"
     )
 
 
@@ -511,31 +517,33 @@ class Try(StepType):
 
         Try(
             steps=body_steps,
-            retry={"predicate": expr("e.code == 429"), "max_retries": 3,
-                    "backoff": {"initial_delay": 1, "max_delay": 30, "multiplier": 2}},
+            retry=Retry(
+                expr("e.code == 429"),
+                max_retries=3,
+                backoff=Backoff(initial_delay=1, max_delay=30, multiplier=2),
+            ),
             error_steps=except_steps,
         )
 
         # Retry with a string predicate:
-        Try(steps=body_steps, retry="http.default_retry")
+        Try(steps=body_steps, retry=Retry("http.default_retry", max_retries=5))
 
     Args:
-        steps: Try body (Steps container or list of dicts).
-        retry: Retry configuration — dict with predicate/max_retries/backoff,
-            a RetryConfig model, or a string predicate name.
-        error_steps: Except handler steps (Steps container or list of dicts).
-            The error variable is always bound to ``e``.
+        steps: Try body (Steps container, callable, or list of dicts).
+        retry: Optional ``Retry`` instance for retry configuration.
+        error_steps: Except handler steps (Steps container, callable, or
+            list of dicts).  The error variable is always bound to ``e``.
     """
 
     def __init__(
         self,
         *,
         steps: Any,
-        retry: Optional[Union[Dict[str, Any], RetryConfig, str]] = None,
+        retry: Optional[Retry] = None,
         error_steps: Optional[Any] = None,
     ) -> None:
         self._steps = steps
-        self._retry_raw = retry
+        self._retry = retry
         self._error_steps = error_steps
 
     def build(self, step_id: str) -> Dict[str, Any]:
@@ -545,7 +553,7 @@ class Try(StepType):
         try_body = self._build_try_body(step_dicts)
 
         # Resolve retry
-        retry = self._build_retry()
+        retry = self._retry._to_model() if self._retry is not None else None
 
         # Resolve except
         except_body = self._build_except()
@@ -568,26 +576,6 @@ class Try(StepType):
                     result=step_body.get("result"),
                 )
         return TryStepsBody(steps=step_dicts)
-
-    def _build_retry(self) -> Any:
-        """Resolve retry configuration."""
-        if self._retry_raw is None:
-            return None
-        if isinstance(self._retry_raw, (RetryConfig, str)):
-            return self._retry_raw
-        if isinstance(self._retry_raw, dict):
-            backoff_data = self._retry_raw.get("backoff")
-            backoff = (
-                BackoffConfig(**backoff_data)
-                if isinstance(backoff_data, dict)
-                else backoff_data
-            )
-            return RetryConfig(
-                predicate=self._retry_raw["predicate"],
-                max_retries=self._retry_raw["max_retries"],
-                backoff=backoff,
-            )
-        return self._retry_raw
 
     def _build_except(self) -> Optional[ExceptBody]:
         """Resolve except handler with hardcoded error variable 'e'."""

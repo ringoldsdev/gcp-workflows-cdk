@@ -113,20 +113,20 @@ The builder API provides a class-based, imperative approach to constructing work
 
 ### Steps
 
-`Steps` is the universal container for workflow steps. Steps are added via the `__call__` protocol.
+`Steps` is the universal container for workflow steps. Steps are added via `.step()` which returns `self` for chaining. Steps from other containers are merged via `.merge()`.
 
 ```python
 s = Steps()
-s("step_id", StepType)      # add a named step (returns None)
-s(other_steps)               # merge steps from another Steps container
-s.build() -> list[dict]      # serialize to list of step dicts
-s._finalize() -> Workflow    # convert to SimpleWorkflow or SubworkflowsWorkflow
+s.step("step_id", StepType)     # add a named step (returns self)
+s.merge(other_steps)             # merge steps from another container (returns self)
+s.build() -> list[dict]          # serialize to list of step dicts
+s._finalize() -> Workflow        # convert to SimpleWorkflow or SubworkflowsWorkflow
 ```
 
 | Method | Description |
 |---|---|
-| `s("name", step)` | Add a named step. `step` must be a `StepType` instance. Returns `None`. |
-| `s(other)` | Merge all steps from another `Steps` instance (appends in order). |
+| `s.step("name", step)` | Add a named step. `step` must be a `StepType` instance. Returns `self`. |
+| `s.merge(other)` | Merge all steps from another `Steps` instance (appends in order). Returns `self`. |
 | `s.build()` | Serialize to `list[dict]` — each entry is `{step_id: body}`. |
 | `s._finalize()` | Convert to a Pydantic workflow model (`SimpleWorkflow` or `SubworkflowsWorkflow`). |
 | `len(s)` | Number of steps. |
@@ -140,6 +140,17 @@ Steps(*, params=None)
 | Arg | Description |
 |---|---|
 | `params` | Optional `list` of parameter names (strings) or parameter dicts with defaults (e.g. `[{"timeout": 30}]`). When set, the container represents a subworkflow. |
+
+#### Method Chaining
+
+`.step()` and `.merge()` return `self`, enabling fluent chains:
+
+```python
+s = Steps()
+s.step("init", Assign(x=10)) \
+ .step("log", Call("sys.log", args={"text": expr("x")})) \
+ .step("done", Return(expr("x")))
+```
 
 ### Step Classes
 
@@ -213,7 +224,7 @@ Condition(condition, *, next=None, steps=None, assign=None, returns=UNSET, raise
 |---|---|
 | `condition` | The condition expression. |
 | `next` | Jump target. |
-| `steps` | Inline `Steps` container to execute. |
+| `steps` | Inline `Steps` container or callable to execute. |
 | `assign` | Inline assignments (list of single-key dicts). |
 | `returns` | Return value if condition is true. Uses `_UNSET` sentinel; `None` is a valid value. |
 | `raises` | Raise value if condition is true. Uses `_UNSET` sentinel; `None` is a valid value. |
@@ -230,7 +241,7 @@ For(*, value, items=None, range=None, index=None, steps)
 | `items` | Collection to iterate (mutually exclusive with `range`). Accepts a list, expression, or any value. |
 | `range` | Range specification `[start, end]` or `[start, end, step]`. |
 | `index` | Optional index variable name. |
-| `steps` | Loop body — `Steps` container or list of dicts (required). |
+| `steps` | Loop body — `Steps` container, callable, or list of dicts (required). |
 
 #### Parallel
 
@@ -240,7 +251,7 @@ Parallel(*, branches, shared=None, exception_policy=None, concurrency_limit=None
 
 | Arg | Description |
 |---|---|
-| `branches` | Dict of `{name: Steps}` (at least one required). |
+| `branches` | Dict of `{name: Steps}` or `{name: callable}` (at least one required). |
 | `shared` | List of shared variable names. |
 | `exception_policy` | Exception handling policy (e.g. `"continueAll"`). |
 | `concurrency_limit` | Max concurrent branches. |
@@ -253,25 +264,35 @@ Try(*, steps, retry=None, error_steps=None)
 
 | Arg | Description |
 |---|---|
-| `steps` | Try body — `Steps` container or list of dicts (required). |
-| `retry` | Retry config — dict, `RetryConfig` model, or string predicate name. |
-| `error_steps` | Except handler steps — `Steps` container or list of dicts. The error variable is always bound to `e`. |
+| `steps` | Try body — `Steps` container, callable, or list of dicts (required). |
+| `retry` | Optional `Retry` instance for retry configuration. |
+| `error_steps` | Except handler steps — `Steps` container, callable, or list of dicts. The error variable is always bound to `e`. |
 
 Try body auto-detection: if the body is a single Call step, it produces a `TryCallBody` (flat call fields); otherwise a `TryStepsBody` (nested steps list).
 
-Retry dict format:
+#### Retry
 
 ```python
-{
-    "predicate": "http.default_retry",    # or an expression
-    "max_retries": 3,
-    "backoff": {
-        "initial_delay": 1,
-        "max_delay": 60,
-        "multiplier": 2,
-    },
-}
+Retry(predicate, *, max_retries, backoff=None)
 ```
+
+| Arg | Description |
+|---|---|
+| `predicate` | Retry predicate — a string name (e.g. `"http.default_retry"`) or an expression (positional). |
+| `max_retries` | Maximum number of retry attempts (keyword). |
+| `backoff` | Optional `Backoff` instance for exponential backoff (keyword). |
+
+#### Backoff
+
+```python
+Backoff(*, initial_delay, max_delay, multiplier)
+```
+
+| Arg | Description |
+|---|---|
+| `initial_delay` | Initial delay in seconds before the first retry. |
+| `max_delay` | Maximum delay in seconds between retries. |
+| `multiplier` | Multiplier applied to the delay after each retry. |
 
 #### NestedSteps
 
@@ -281,36 +302,48 @@ NestedSteps(*, steps, next=None)
 
 | Arg | Description |
 |---|---|
-| `steps` | Nested `Steps` container or list of dicts. |
+| `steps` | Nested `Steps` container, callable, or list of dicts. |
 | `next` | Jump target step name. |
+
+### Callables for Inline Steps
+
+Wherever a compound step accepts a `steps` parameter (For, Parallel branches, Try, Switch conditions, NestedSteps), you can pass a callable instead of a `Steps` instance. The callable receives a fresh `Steps` and its return value is ignored:
+
+```python
+s.step("loop", For(
+    value="item",
+    items=["a", "b", "c"],
+    steps=lambda s: s.step("log", Call("sys.log", args={"text": expr("item")})),
+))
+```
 
 ### build() Function
 
 ```python
-build(workflows: dict[str, Steps | dict[str, Steps] | Workflow], output_dir: str | Path = ".") -> list[Path]
+build(workflows: dict[str, dict[str, Steps]], output_dir: str | Path = ".") -> list[Path]
 ```
 
-Writes each `{filename: workflow}` entry as a YAML file to `output_dir`. Creates directories as needed. Returns the list of written file paths.
+Writes each `{filename: {name: Steps}}` entry as a YAML file to `output_dir`. Creates directories as needed. Returns the list of written file paths.
 
-Values can be:
+Each workflow value must be a `dict[str, Steps]` with a required `"main"` key:
 
 | Type | Behavior |
 |---|---|
-| `Steps` | Auto-finalized. No params → `SimpleWorkflow`; with params → `SubworkflowsWorkflow`. |
-| `dict[str, Steps]` | Multi-workflow. Assembled into `SubworkflowsWorkflow`. Single `"main"` without params collapses to `SimpleWorkflow`. |
-| `SimpleWorkflow` / `SubworkflowsWorkflow` | Passed through directly. |
+| `dict[str, Steps]` with only `"main"` (no params) | Produces `SimpleWorkflow` (flat step list). |
+| `dict[str, Steps]` with `"main"` + other keys | Produces `SubworkflowsWorkflow` (named workflows). |
+| `dict[str, Steps]` with `"main"` having params | Produces `SubworkflowsWorkflow`. |
 
 ### Composition
 
-Steps containers are composable via the merge protocol:
+Steps containers are composable via `.merge()`:
 
 ```python
 common = Steps()
-common("log", Call("sys.log", args={"text": "starting"}))
+common.step("log", Call("sys.log", args={"text": "starting"}))
 
 main = Steps()
-main(common)                # merges steps from common
-main("done", Return("ok"))
+main.merge(common)              # merges steps from common
+main.step("done", Return("ok"))
 ```
 
 Factory functions that return `Steps` instances are the primary composition pattern:
@@ -318,13 +351,13 @@ Factory functions that return `Steps` instances are the primary composition patt
 ```python
 def logging_steps(message):
     s = Steps()
-    s("log", Call("sys.log", args={"text": message}))
+    s.step("log", Call("sys.log", args={"text": message}))
     return s
 
 main = Steps()
-main("init", Assign(status="starting"))
-main(logging_steps("Workflow started"))
-main("done", Return("ok"))
+main.step("init", Assign(status="starting"))
+main.merge(logging_steps("Workflow started"))
+main.step("done", Return("ok"))
 ```
 
 ---
@@ -371,7 +404,7 @@ All models use `model_dump(by_alias=True, exclude_none=True)` for serialization.
 | `TryCallBody(call, args?, result?)` | Try body form A |
 | `TryStepsBody(steps)` | Try body form B |
 | `ExceptBody(as_, steps)` | Except handler |
-| `RetryConfig(predicate, max_retries, backoff)` | Custom retry configuration |
+| `RetryConfig(predicate, max_retries, backoff?)` | Custom retry configuration |
 | `BackoffConfig(initial_delay, max_delay, multiplier)` | Exponential backoff settings |
 
 ### Validation Constraints
@@ -413,6 +446,7 @@ src/cloud_workflows/
     parser.py         Analysis pipeline (analyze_yaml, analyze_workflow)
     builder.py        Steps container + build() function
     steps.py          StepType base + step classes (Assign, Call, Switch, etc.)
+    retry.py          Retry + Backoff builder classes
 ```
 
 ### Processing Pipeline
@@ -614,6 +648,7 @@ cloud-workflows-generator/
         parser.py               Analysis pipeline functions
         builder.py              Steps container + build() function
         steps.py                StepType base + step classes
+        retry.py                Retry + Backoff builder classes
     tests/
         conftest.py             Shared test helpers
         validation/             YAML parsing + validation tests
@@ -656,4 +691,4 @@ cloud-workflows-generator/
 PYTHONPATH=src python -m pytest tests/ -v
 ```
 
-390 tests: 304 validation/CDK + 86 builder (step builder + workflow builder + build).
+399 tests: 304 validation/CDK + 95 builder (step builder + workflow builder + build).

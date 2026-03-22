@@ -12,11 +12,11 @@ pip install -e .
 from cloud_workflows import Steps, Assign, Call, Return, build, expr
 
 s = Steps()
-s("init", Assign(x=10, y=20))
-s("log", Call("sys.log", args={"text": expr("x + y")}))
-s("done", Return(expr("x + y")))
+s.step("init", Assign(x=10, y=20))
+s.step("log", Call("sys.log", args={"text": expr("x + y")}))
+s.step("done", Return(expr("x + y")))
 
-build({"workflow.yaml": s})
+build({"workflow.yaml": {"main": s}})
 ```
 
 Output (`workflow.yaml`):
@@ -40,16 +40,16 @@ Output (`workflow.yaml`):
 
 ```python
 # kwargs — each key-value pair becomes an assignment
-s("init", Assign(x=10, greeting=expr('"Hello, " + name')))
+s.step("init", Assign(x=10, greeting=expr('"Hello, " + name')))
 
 # dict for complex keys (dotted paths, bracket syntax)
-s("init", Assign({"config.http.timeout": 30, 'map["key"]': "value"}))
+s.step("init", Assign({"config.http.timeout": 30, 'map["key"]': "value"}))
 
 # combine dict and kwargs
-s("init", Assign({"a.b.c": 1}, x=10))
+s.step("init", Assign({"a.b.c": 1}, x=10))
 
 # with jump target
-s("init", Assign(x=10, next="process"))
+s.step("init", Assign(x=10, next="process"))
 ```
 
 #### Dot-path unnesting
@@ -57,7 +57,7 @@ s("init", Assign(x=10, next="process"))
 Dot-separated keys are automatically expanded into nested dicts:
 
 ```python
-s("init", Assign({"config.http.timeout": 30, "config.http.retries": 3}))
+s.step("init", Assign({"config.http.timeout": 30, "config.http.retries": 3}))
 ```
 
 Produces:
@@ -76,15 +76,15 @@ Produces:
 ### Call
 
 ```python
-s("fetch", Call("http.get", args={"url": "https://example.com"}, result="response"))
-s("log", Call("sys.log", args={"text": expr("response.body")}, next="done"))
+s.step("fetch", Call("http.get", args={"url": "https://example.com"}, result="response"))
+s.step("log", Call("sys.log", args={"text": expr("response.body")}, next="done"))
 ```
 
 ### Return / Raise
 
 ```python
-s("done", Return(expr("response.body")))
-s("fail", Raise({"code": 404, "message": "Not found"}))
+s.step("done", Return(expr("response.body")))
+s.step("fail", Raise({"code": 404, "message": "Not found"}))
 ```
 
 ### Switch
@@ -92,7 +92,7 @@ s("fail", Raise({"code": 404, "message": "Not found"}))
 ```python
 from cloud_workflows import Switch, Condition
 
-s("check", Switch([
+s.step("check", Switch([
     Condition(expr("x > 0"), next="positive"),
     Condition(expr("x == 0"), returns="zero"),
     Condition(True, next="negative"),  # default case
@@ -104,12 +104,18 @@ s("check", Switch([
 ```python
 from cloud_workflows import For
 
+# With Steps container
 inner = Steps()
-inner("log", Call("sys.log", args={"text": expr("item")}))
+inner.step("log", Call("sys.log", args={"text": expr("item")}))
 
-s("loop", For(value="item", items=["a", "b", "c"], steps=inner))
-s("count", For(value="i", range=[1, 10], steps=inner))
-s("indexed", For(value="item", items=items, index="idx", steps=inner))
+s.step("loop", For(value="item", items=["a", "b", "c"], steps=inner))
+
+# With callable (lambda receives a fresh Steps)
+s.step("loop", For(
+    value="item",
+    items=["a", "b", "c"],
+    steps=lambda s: s.step("log", Call("sys.log", args={"text": expr("item")})),
+))
 ```
 
 ### Parallel
@@ -118,38 +124,56 @@ s("indexed", For(value="item", items=items, index="idx", steps=inner))
 from cloud_workflows import Parallel
 
 b1 = Steps()
-b1("get_users", Call("http.get", args={"url": "https://example.com/users"}, result="users"))
+b1.step("get_users", Call("http.get", args={"url": "https://example.com/users"}, result="users"))
 
 b2 = Steps()
-b2("get_orders", Call("http.get", args={"url": "https://example.com/orders"}, result="orders"))
+b2.step("get_orders", Call("http.get", args={"url": "https://example.com/orders"}, result="orders"))
 
-s("work", Parallel(
+s.step("work", Parallel(
     branches={"fetch_users": b1, "fetch_orders": b2},
     shared=["users", "orders"],
     concurrency_limit=2,
 ))
+
+# Branches can also be callables:
+s.step("work", Parallel(branches={
+    "b1": lambda s: s.step("do", Call("sys.log", args={"text": "b1"})),
+    "b2": lambda s: s.step("do", Call("sys.log", args={"text": "b2"})),
+}))
 ```
 
 ### Try / Except / Retry
 
 ```python
-from cloud_workflows import Try
+from cloud_workflows import Try, Retry, Backoff
 
 body = Steps()
-body("fetch", Call("http.get", args={"url": "https://example.com"}, result="resp"))
+body.step("fetch", Call("http.get", args={"url": "https://example.com"}, result="resp"))
 
 except_steps = Steps()
-except_steps("log", Call("sys.log", args={"text": expr("e.message")}))
-except_steps("rethrow", Raise(expr("e")))
+except_steps.step("log", Call("sys.log", args={"text": expr("e.message")}))
+except_steps.step("rethrow", Raise(expr("e")))
 
-s("safe_call", Try(
+s.step("safe_call", Try(
     steps=body,
-    retry={
-        "predicate": expr("http.default_retry_predicate"),
-        "max_retries": 3,
-        "backoff": {"initial_delay": 1, "max_delay": 60, "multiplier": 2},
-    },
+    retry=Retry(
+        expr("http.default_retry_predicate"),
+        max_retries=3,
+        backoff=Backoff(initial_delay=1, max_delay=60, multiplier=2),
+    ),
     error_steps=except_steps,
+))
+
+# Retry without backoff:
+s.step("simple_retry", Try(
+    steps=body,
+    retry=Retry("http.default_retry", max_retries=5),
+))
+
+# Steps and error_steps also accept callables:
+s.step("safe_call", Try(
+    steps=lambda s: s.step("fetch", Call("http.get", args={"url": "https://example.com"}, result="resp")),
+    error_steps=lambda s: s.step("handle", Raise(expr("e"))),
 ))
 ```
 
@@ -159,38 +183,61 @@ s("safe_call", Try(
 from cloud_workflows import NestedSteps
 
 inner = Steps()
-inner("step_a", Call("sys.log", args={"text": "a"}))
-inner("step_b", Call("sys.log", args={"text": "b"}))
+inner.step("step_a", Call("sys.log", args={"text": "a"}))
+inner.step("step_b", Call("sys.log", args={"text": "b"}))
 
-s("group", NestedSteps(steps=inner, next="done"))
+s.step("group", NestedSteps(steps=inner, next="done"))
 ```
 
 ## Composition
 
+### Method Chaining
+
+`.step()` and `.merge()` return `self` for fluent chaining:
+
+```python
+s = Steps()
+s.step("init", Assign(x=10)) \
+ .step("log", Call("sys.log", args={"text": expr("x")})) \
+ .step("done", Return(expr("x")))
+```
+
 ### Merging Steps
 
-Call a `Steps` container with another to merge its steps:
+Use `.merge()` to append steps from another container:
 
 ```python
 def logging_steps(message):
     s = Steps()
-    s("log", Call("sys.log", args={"text": message}))
+    s.step("log", Call("sys.log", args={"text": message}))
     return s
 
 def error_handler():
     body = Steps()
-    body("op", Call("http.get", args={"url": "https://example.com"}, result="r"))
+    body.step("op", Call("http.get", args={"url": "https://example.com"}, result="r"))
     except_steps = Steps()
-    except_steps("fail", Raise(expr("e")))
+    except_steps.step("fail", Raise(expr("e")))
     s = Steps()
-    s("safe", Try(steps=body, error_steps=except_steps))
+    s.step("safe", Try(steps=body, error_steps=except_steps))
     return s
 
 main = Steps()
-main("init", Assign(status="starting"))
-main(logging_steps("Workflow started"))
-main(error_handler())
-main("done", Return(expr("r.body")))
+main.step("init", Assign(status="starting"))
+main.merge(logging_steps("Workflow started"))
+main.merge(error_handler())
+main.step("done", Return(expr("r.body")))
+```
+
+### Callables for Inline Steps
+
+Compound steps (For, Parallel, Try, Switch, NestedSteps) accept callables wherever they take a `Steps` parameter. The callable receives a fresh `Steps` instance:
+
+```python
+s.step("loop", For(
+    value="item",
+    items=["a", "b", "c"],
+    steps=lambda s: s.step("log", Call("sys.log", args={"text": expr("item")})),
+))
 ```
 
 ### Factory Functions
@@ -200,14 +247,14 @@ from cloud_workflows import Steps, Assign, Call, Return, build, expr
 
 def api_workflow(url):
     s = Steps()
-    s("init", Assign(endpoint=url))
-    s("fetch", Call("http.get", args={"url": expr("endpoint")}, result="response"))
-    s("done", Return(expr("response.body")))
+    s.step("init", Assign(endpoint=url))
+    s.step("fetch", Call("http.get", args={"url": expr("endpoint")}, result="response"))
+    s.step("done", Return(expr("response.body")))
     return s
 
 build({
-    "users.yaml": api_workflow("https://example.com/users"),
-    "orders.yaml": api_workflow("https://example.com/orders"),
+    "users.yaml": {"main": api_workflow("https://example.com/users")},
+    "orders.yaml": {"main": api_workflow("https://example.com/orders")},
 }, output_dir="output/")
 ```
 
@@ -219,26 +266,27 @@ For workflows with multiple subworkflows or runtime parameters, use `Steps(param
 from cloud_workflows import Steps, Assign, Call, Return, build, expr
 
 main = Steps()
-main("greet", Call("make_greeting", args={"person": "Alice"}, result="msg"))
-main("done", Return(expr("msg")))
+main.step("greet", Call("make_greeting", args={"person": "Alice"}, result="msg"))
+main.step("done", Return(expr("msg")))
 
 helper = Steps(params=["person"])
-helper("build", Assign(greeting=expr('"Hello, " + person')))
-helper("done", Return(expr("greeting")))
+helper.step("build", Assign(greeting=expr('"Hello, " + person')))
+helper.step("done", Return(expr("greeting")))
 
 build({"workflow.yaml": {"main": main, "helper": helper}})
 ```
 
-For simple workflows (no subworkflows, no params), pass the `Steps` instance directly:
+`build()` always requires a `dict[str, Steps]` with a `"main"` key for each file entry:
 
 ```python
+# Single simple workflow:
 s = Steps()
-s("init", Assign(x=10))
-s("done", Return(expr("x")))
-build({"workflow.yaml": s})
+s.step("init", Assign(x=10))
+s.step("done", Return(expr("x")))
+build({"workflow.yaml": {"main": s}})
 ```
 
-`build()` auto-finalizes `Steps` into `SimpleWorkflow` (flat list) when there is a single workflow with no params, or `SubworkflowsWorkflow` (dict of named workflows) otherwise.
+A single `"main"` without params produces `SimpleWorkflow` (flat list). Multiple workflows or params produce `SubworkflowsWorkflow` (dict of named workflows).
 
 ## Validation
 

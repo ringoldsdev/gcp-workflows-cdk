@@ -45,6 +45,10 @@ from .steps import (
     Try,
     NestedSteps,
 )
+from .retry import (
+    Retry,
+    Backoff,
+)
 from .parser import (
     analyze_yaml,
     analyze_workflow,
@@ -103,6 +107,9 @@ __all__ = [
     "Parallel",
     "Try",
     "NestedSteps",
+    # Retry
+    "Retry",
+    "Backoff",
     # Serialization
     "to_yaml",
     "expr",

@@ -58,7 +58,7 @@ class RetryConfig(BaseModel):
 
     predicate: str  # expression or subworkflow reference
     max_retries: int = Field(..., gt=0)
-    backoff: BackoffConfig
+    backoff: Optional[BackoffConfig] = None
 
 
 # =============================================================================

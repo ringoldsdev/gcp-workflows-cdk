@@ -25,8 +25,8 @@ Steps.build()                              <-- Collects all step dicts
 _finalize() / build({...})                 <-- Returns SimpleWorkflow or
     |                                         SubworkflowsWorkflow
     v
-build({"out.yaml": workflow})              <-- Serializes to YAML files
-    |                                         (auto-finalizes Steps objects)
+build({"out.yaml": {"main": s}})          <-- Serializes to YAML files
+    |                                         (requires dict with "main" key)
     |
     +-> workflow.to_dict()
     |     +-> model_dump(by_alias=True, exclude_none=True)
@@ -51,7 +51,7 @@ StepType
   +-- Switch      -> SwitchStep         conditions: list[Condition], next
   +-- For         -> ForStep            value, in/range, index, steps
   +-- Parallel    -> ParallelStep       branches: dict[str, Steps], shared, ...
-  +-- Try         -> TryStep            steps, retry, except_
+  +-- Try         -> TryStep            steps, retry (Retry class), except_
   +-- NestedSteps -> NestedStepsStep    steps, next
 ```
 
@@ -77,18 +77,42 @@ This means validation errors surface at `build()` time, not at step construction
 
 This matches GCP Workflows' two forms for try bodies.
 
+### Retry and Backoff
+
+Retry configuration uses dedicated builder classes (`Retry` and `Backoff` in `retry.py`) rather than raw dicts:
+
+```python
+Retry(
+    expr("e.code == 429"),          # predicate (positional)
+    max_retries=3,                  # keyword
+    backoff=Backoff(                # optional keyword
+        initial_delay=1,
+        max_delay=60,
+        multiplier=2,
+    ),
+)
+```
+
+Each class has a `_to_model()` method that converts to the corresponding Pydantic model (`RetryConfig`, `BackoffConfig`) at build time.
+
 ### `_UNSET` sentinel
 
-The `_UNSET` sentinel is used in `Condition` for `return_` and `raise_` parameters, where `None` is a valid value that means "return/raise None". Absence from the constructor is represented by `_UNSET` to distinguish "not provided" from "provided as None".
+The `_UNSET` sentinel is used in `Condition` for `returns` and `raises` parameters, where `None` is a valid value that means "return/raise None". Absence from the constructor is represented by `_UNSET` to distinguish "not provided" from "provided as None".
 
 ## Steps Container
 
-`Steps` is the universal step container with an overloaded `__call__` protocol:
+`Steps` is the universal step container with `.step()` for adding steps and `.merge()` for composing containers:
 
 ```python
 s = Steps(params=["arg1", {"arg2": "default"}])
-s("step_id", StepType)    # add a named step
-s(other_steps)             # merge steps from another container
+s.step("step_id", StepType)    # add a named step (returns self)
+s.merge(other_steps)            # merge steps from another container (returns self)
+```
+
+Both `.step()` and `.merge()` return `self`, enabling method chaining:
+
+```python
+s.step("init", Assign(x=10)).step("done", Return(expr("x")))
 ```
 
 Internally, `Steps` stores a list of `(step_id, StepType)` tuples. The `build()` method iterates and calls each step's `build(step_id)`.
@@ -100,7 +124,7 @@ Internally, `Steps` stores a list of `(step_id, StepType)` tuples. The `build()`
 - With params -> `SubworkflowsWorkflow` (single "main" workflow)
 
 The `build()` function handles multi-workflow finalization:
-- `dict[str, Steps]` -> `SubworkflowsWorkflow`
+- `dict[str, Steps]` with required `"main"` key -> `SubworkflowsWorkflow`
 - Single `"main"` without params collapses to `SimpleWorkflow`
 
 ## Nested Step Resolution
@@ -108,16 +132,29 @@ The `build()` function handles multi-workflow finalization:
 Compound steps (For, Parallel, Try, Switch, NestedSteps) contain child step sequences. The `_resolve_steps()` helper handles conversion:
 
 ```
-Input: Steps container or raw list
+Input: Steps container, callable, or raw list
                 |
                 v
         If Steps -> .build() -> List[Dict]
+                |
+                v
+        If callable -> create Steps, invoke, .build() -> List[Dict]
                 |
                 v
         If list  -> returned as-is
                 |
                 v
         Output: List[Dict[str, Any]]
+```
+
+Callables receive a fresh `Steps` instance, are invoked (return value ignored), and the resulting steps are serialized. This enables inline step definitions:
+
+```python
+For(
+    value="item",
+    items=["a", "b", "c"],
+    steps=lambda s: s.step("log", Call("sys.log", args={"text": expr("item")})),
+)
 ```
 
 The resulting list of dicts is passed to the parent Pydantic model constructor (e.g. `ForBody(steps=step_dicts)`), where Pydantic re-validates each dict through the `Step` model validator. This means nested steps go through a **serialize -> re-validate** round-trip, which ensures structural integrity at every nesting level.
@@ -149,6 +186,7 @@ src/cloud_workflows/
     models.py         Pydantic v2 models, serializers, discriminated unions
     builder.py        Steps container + build() function
     steps.py          StepType base + step classes (Assign, Call, Switch, etc.)
+    retry.py          Retry + Backoff builder classes
     expressions.py    Pratt parser for ${...} expressions
     variables.py      Scope-based variable analysis
     parser.py         analyze_yaml(), analyze_workflow()
