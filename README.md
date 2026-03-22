@@ -16,7 +16,7 @@ workflow = (
     .steps(lambda s: s
         .assign("init", x=10, y=20)
         .call("log", func="sys.log", args={"text": expr("x + y")})
-        .return_("done", value=expr("x + y"))
+        .returns("done", value=expr("x + y"))
     )
     .build()
 )
@@ -98,12 +98,12 @@ s.call("fetch", lambda c: c
 ### Return / Raise
 
 ```python
-s.return_("done", value=expr("response.body"))
-s.raise_("fail", value={"code": 404, "message": "Not found"})
+s.returns("done", value=expr("response.body"))
+s.raises("fail", value={"code": 404, "message": "Not found"})
 
 # callback
-s.return_("done", lambda r: r.value(expr("x + y")))
-s.raise_("fail", lambda r: r.value(expr("e")))
+s.returns("done", lambda r: r.value(expr("x + y")))
+s.raises("fail", lambda r: r.value(expr("e")))
 ```
 
 ### Switch
@@ -121,11 +121,11 @@ s.switch("check", lambda sw: sw
 
 ```python
 # kwargs — value is always required, provide either in_ or range_
-s.for_("loop", value="item", in_=expr("items"), steps=inner_steps)
-s.for_("count", value="i", range_=[1, 10], steps=inner_steps)
+s.loop("loop", value="item", in_=expr("items"), steps=inner_steps)
+s.loop("count", value="i", range_=[1, 10], steps=inner_steps)
 
 # callback
-s.for_("loop", lambda f: f
+s.loop("loop", lambda f: f
     .value("item")
     .index("idx")
     .in_(["a", "b", "c"])
@@ -155,7 +155,7 @@ s.parallel("work", lambda p: p
 
 ```python
 # callback — .body() wraps the operation, .retry() and .except_() add error handling
-s.try_("safe_call", lambda t: t
+s.do_try("safe_call", lambda t: t
     .body(lambda s: s
         .call("fetch", func="http.get", args={"url": "https://example.com"}, result="resp")
     )
@@ -166,7 +166,7 @@ s.try_("safe_call", lambda t: t
     )
     .except_(as_="e", steps=lambda s: s
         .call("log", func="sys.log", args={"text": expr("e.message")})
-        .raise_("rethrow", value=expr("e"))
+        .raises("rethrow", value=expr("e"))
     )
 )
 ```
@@ -194,9 +194,9 @@ def logging_middleware(message):
     return StepBuilder().call("log", func="sys.log", args={"text": message})
 
 def error_handler():
-    return StepBuilder().try_("safe", lambda t: t
+    return StepBuilder().do_try("safe", lambda t: t
         .body(lambda s: s.call("op", func="http.get", args={"url": "https://example.com"}, result="r"))
-        .except_(as_="e", steps=lambda s: s.raise_("fail", value=expr("e")))
+        .except_(as_="e", steps=lambda s: s.raises("fail", value=expr("e")))
     )
 
 workflow = (
@@ -205,7 +205,7 @@ workflow = (
         .assign("init", status="starting")
         .apply(logging_middleware("Workflow started"))
         .apply(error_handler())
-        .return_("done", value=expr("r.body"))
+        .returns("done", value=expr("r.body"))
     )
     .build()
 )
@@ -234,7 +234,7 @@ def api_workflow(name, url):
         StepBuilder()
         .assign("init", endpoint=url)
         .call("fetch", func="http.get", args={"url": expr("endpoint")}, result="response")
-        .return_("done", value=expr("response.body"))
+        .returns("done", value=expr("response.body"))
     )
 
 workflows = [
@@ -254,11 +254,11 @@ workflow = (
     WorkflowBuilder()
     .workflow("main", lambda s: s
         .call("greet", func="make_greeting", args={"person": "Alice"}, result="msg")
-        .return_("done", value=expr("msg"))
+        .returns("done", value=expr("msg"))
     )
     .workflow("make_greeting", lambda s: s
         .assign("build", greeting=expr('"Hello, " + person'))
-        .return_("done", value=expr("greeting")),
+        .returns("done", value=expr("greeting")),
         params=["person"],
     )
     .build()
@@ -339,6 +339,15 @@ Pydantic field names use trailing underscores for Python reserved words. Seriali
 | `as_` | `as` |
 | `except_` | `except` |
 | `try_` | `try` |
+
+> **Note:** The builder API provides friendlier aliases so you don't need trailing underscores in most code. See the table below. The original underscore names continue to work.
+>
+> | Builder method | Alias(es) | Sub-builder class | Alias(es) |
+> |---|---|---|---|
+> | `.return_(name, ...)` | `.returns()`, `.do_return()` | `Return_` | `Returns`, `DoReturn` |
+> | `.raise_(name, ...)` | `.raises()`, `.do_raise()` | `Raise_` | `Raises`, `DoRaise` |
+> | `.for_(name, ...)` | `.loop()` | `For` | `Loop` |
+> | `.try_(name, ...)` | `.do_try()` | `Try_` | `DoTry` |
 
 ### Model Construction Examples
 

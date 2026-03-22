@@ -120,12 +120,12 @@ Each method takes a `name` (step name) as its first positional argument, an opti
 |---|---|---|
 | `.assign(name, cb, **items)` | `Assign` | Any key-value pairs become assignments |
 | `.call(name, cb, *, func, args, result, next)` | `Call` | |
-| `.return_(name, cb, *, value)` | `Return_` | |
-| `.raise_(name, cb, *, value)` | `Raise_` | |
+| `.returns(name, cb, *, value)` | `Returns` | Aliases: `.return_()`, `.do_return()` |
+| `.raises(name, cb, *, value)` | `Raises` | Aliases: `.raise_()`, `.do_raise()` |
 | `.switch(name, cb, *, conditions, next)` | `Switch` | `conditions`: list of dicts |
-| `.for_(name, cb, *, value, in_, range_, index, steps)` | `For` | `steps`: `StepBuilder` or lambda |
+| `.loop(name, cb, *, value, in_, range_, index, steps)` | `Loop` | Alias: `.for_()`. `steps`: `StepBuilder` or lambda |
 | `.parallel(name, cb, *, branches, shared, exception_policy, concurrency_limit)` | `Parallel` | `branches`: dict of name -> StepBuilder/lambda |
-| `.try_(name, cb, *, body, retry, except_)` | `Try_` | `body`/`except_.steps`: StepBuilder or lambda |
+| `.do_try(name, cb, *, body, retry, except_)` | `DoTry` | Alias: `.try_()`. `body`/`except_.steps`: StepBuilder or lambda |
 | `.nested_steps(name, cb, *, body, next)` | `Steps` | `body`: StepBuilder or lambda |
 | `.raw(name, body)` | — | Escape hatch: accepts a sub-builder instance or Pydantic model directly |
 
@@ -144,17 +144,17 @@ Each sub-builder configures one step type via chaining:
 
 **`Call(function="")`** — `.func(name)`, `.args(**kwargs)`, `.result(name)`, `.next(target)`, `.apply(source)`
 
-**`Return_(value=UNSET)`** — `.value(v)`, `.apply(source)`
+**`Return_(value=UNSET)`** — `.value(v)`, `.apply(source)`. Aliases: `Returns`, `DoReturn`
 
-**`Raise_(value=UNSET)`** — `.value(v)`, `.apply(source)`
+**`Raise_(value=UNSET)`** — `.value(v)`, `.apply(source)`. Aliases: `Raises`, `DoRaise`
 
 **`Switch`** — `.condition(cond, *, next, steps, assign, return_, raise_)`, `.next(target)`, `.apply(source)`
 
-**`For(value="")`** — `.value(name)`, `.in_(items)`, `.range_(r)`, `.index(name)`, `.steps(sb_or_lambda)`, `.apply(source)`
+**`For(value="")`** — `.value(name)`, `.in_(items)`, `.range_(r)`, `.index(name)`, `.steps(sb_or_lambda)`, `.apply(source)`. Alias: `Loop`
 
 **`Parallel`** — `.branch(name, sb_or_lambda)`, `.shared(vars)`, `.exception_policy(policy)`, `.concurrency_limit(limit)`, `.apply(source)`
 
-**`Try_(body=None)`** — `.body(sb_or_lambda)`, `.retry(*, predicate, max_retries, backoff)`, `.except_(*, as_, steps)`, `.apply(source)`
+**`Try_(body=None)`** — `.body(sb_or_lambda)`, `.retry(*, predicate, max_retries, backoff)`, `.except_(*, as_, steps)`, `.apply(source)`. Alias: `DoTry`
 
 **`Steps(body=None)`** — `.body(sb_or_lambda)`, `.next(target)`, `.apply(source)`
 
@@ -246,6 +246,21 @@ Python reserved words use trailing underscores as field names. Pydantic aliases 
 | `as_` | `as` |
 | `except_` | `except` |
 | `try_` | `try` |
+
+### Builder Aliases
+
+The builder API provides friendlier names that avoid trailing underscores. These are pure aliases — the original names continue to work.
+
+| Original | Alias(es) | Notes |
+|---|---|---|
+| `StepBuilder.return_()` | `.returns()`, `.do_return()` | |
+| `StepBuilder.raise_()` | `.raises()`, `.do_raise()` | |
+| `StepBuilder.for_()` | `.loop()` | |
+| `StepBuilder.try_()` | `.do_try()` | |
+| `Return_` class | `Returns`, `DoReturn` | Same class object |
+| `Raise_` class | `Raises`, `DoRaise` | Same class object |
+| `For` class | `Loop` | Same class object |
+| `Try_` class | `DoTry` | Same class object |
 
 ---
 
@@ -484,7 +499,7 @@ cloud-workflows-generator/
             test_workflow_builder.py
             test_cdk.py
             test_build.py
-        fixtures/               YAML fixture files (88 files, 13 directories)
+        fixtures/               YAML fixture files (95 files, 14 directories)
             assign/
             call/
             cdk/
@@ -506,4 +521,4 @@ cloud-workflows-generator/
 PYTHONPATH=src python -m pytest tests/ -v
 ```
 
-411 tests: 228 validation (structural + expression + variable), 183 builder (step builder + workflow builder + CDK + build).
+428 tests: 263 validation (structural + expression + variable), 165 builder (step builder + workflow builder + CDK + build).

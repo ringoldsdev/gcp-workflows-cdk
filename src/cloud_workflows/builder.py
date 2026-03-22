@@ -6,7 +6,7 @@ type has its own method that accepts either kwargs or a lambda configurator:
     sb = (StepBuilder()
         .assign("init", x=10, y=20)
         .call("fetch", func="http.get", args={"url": url})
-        .return_("done", value=expr("x + y")))
+        .returns("done", value=expr("x + y")))
 
 WorkflowBuilder composes StepBuilder(s) into SimpleWorkflow or SubworkflowsWorkflow:
 
@@ -119,6 +119,10 @@ class StepBuilder:
     arguments for configuration, or a single callable (lambda configurator)
     that receives the corresponding sub-builder.
 
+    Aliases are provided for methods that would otherwise require trailing
+    underscores: ``returns``/``do_return``, ``raises``/``do_raise``,
+    ``loop``, ``do_try``.
+
     Usage::
 
         sb = (StepBuilder()
@@ -127,7 +131,7 @@ class StepBuilder:
             .switch("check", lambda sw: sw
                 .condition(expr("x > 0"), next="positive")
                 .condition(True, next="negative"))
-            .return_("done", value=expr("x")))
+            .returns("done", value=expr("x")))
     """
 
     def __init__(self) -> None:
@@ -543,6 +547,23 @@ class StepBuilder:
         """Return the list of Step objects."""
         return list(self._steps)
 
+    # -----------------------------------------------------------------
+    # Aliases — friendlier names that avoid trailing underscores
+    # -----------------------------------------------------------------
+
+    #: Alias for :meth:`return_`.
+    returns = return_
+    #: Alias for :meth:`return_`.
+    do_return = return_
+    #: Alias for :meth:`raise_`.
+    raises = raise_
+    #: Alias for :meth:`raise_`.
+    do_raise = raise_
+    #: Alias for :meth:`for_`.
+    loop = for_
+    #: Alias for :meth:`try_`.
+    do_try = try_
+
 
 # =============================================================================
 # WorkflowBuilder
@@ -676,7 +697,7 @@ def build(
 
         main = (StepBuilder()
             .assign("init", x=10, y=20)
-            .return_("done", value=expr("x + y")))
+            .returns("done", value=expr("x + y")))
 
         build([
             ("my_workflow.yaml", WorkflowBuilder().steps(main).build()),

@@ -5,11 +5,16 @@ All step types extend ``StepBase``, which provides:
 - ``set(path, value)`` using *jsonpath-ng* for nested-key creation
 - ``apply(source)`` using *deepmerge* for deep-merging another builder's state
 
-Subclasses add typed convenience methods (e.g. ``Call.func()``, ``For.in_()``)
+Subclasses add typed convenience methods (e.g. ``Call.func()``, ``Loop.in_()``)
 and a ``build()`` method that emits the matching Pydantic model.
 
+Aliases are provided for classes that would otherwise require trailing
+underscores: ``Returns``/``DoReturn`` for ``Return_``,
+``Raises``/``DoRaise`` for ``Raise_``, ``DoTry`` for ``Try_``,
+and ``Loop`` for ``For``.
+
 Usage:
-    from cloud_workflows.steps import Assign, Call, Return_, For, Parallel, Try_
+    from cloud_workflows.steps import Assign, Call, Returns, Loop, Parallel, DoTry
 
     # Used directly:
     Assign().set("x", 10).set("y", 20).build()  # → AssignStep
@@ -52,11 +57,17 @@ __all__ = [
     "Assign",
     "Call",
     "Return_",
+    "Returns",
+    "DoReturn",
     "Raise_",
+    "Raises",
+    "DoRaise",
     "Switch",
     "For",
+    "Loop",
     "Parallel",
     "Try_",
+    "DoTry",
     "Steps",
 ]
 
@@ -762,3 +773,26 @@ class Steps(StepBase):
         step_dicts = _resolve_step_builder(self._state["body"])
 
         return NestedStepsStep(steps=step_dicts, next=self._state.get("next"))
+
+
+# ============================================================================
+# Aliases — friendlier names that avoid trailing underscores
+# ============================================================================
+
+Returns = Return_
+"""Alias for :class:`Return_`."""
+
+DoReturn = Return_
+"""Alias for :class:`Return_`."""
+
+Raises = Raise_
+"""Alias for :class:`Raise_`."""
+
+DoRaise = Raise_
+"""Alias for :class:`Raise_`."""
+
+DoTry = Try_
+"""Alias for :class:`Try_`."""
+
+Loop = For
+"""Alias for :class:`For`."""

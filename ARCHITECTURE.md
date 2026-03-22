@@ -73,11 +73,12 @@ With `_state: dict`:
 |---|---|
 | `Assign` | `items` list appends, `next` overwrites |
 | `Call` | Field-level override (custom `apply()` — args replaced wholesale, not recursively merged) |
-| `Return_`, `Raise_` | Value overwrites |
+| `Return_` / `Returns` / `DoReturn` | Value overwrites |
+| `Raise_` / `Raises` / `DoRaise` | Value overwrites |
 | `Switch` | `conditions` list appends, `next` overwrites |
-| `For` | All fields overwrite, `steps` replaced |
+| `For` / `Loop` | All fields overwrite, `steps` replaced |
 | `Parallel` | `branches` list appends, options overwrite |
-| `Try_` | All fields overwrite |
+| `Try_` / `DoTry` | All fields overwrite |
 | `Steps` | `body` replaced, `next` overwrites |
 
 `Call` overrides `apply()` because its `args` dict should be replaced as a unit, not recursively merged with the target's args. All other types use the default `StepBase.apply()` deep-merge.
@@ -92,14 +93,16 @@ The `_UNSET` sentinel is still used in one place: `Switch.condition()` defaults 
 StepBase
   ├── Assign       → AssignStep         items: List[dict], next
   ├── Call         → CallStep           func, args, result, next
-  ├── Return_      → ReturnStep         value
-  ├── Raise_       → RaiseStep          value
+  ├── Return_      → ReturnStep         value       (aliases: Returns, DoReturn)
+  ├── Raise_       → RaiseStep          value       (aliases: Raises, DoRaise)
   ├── Switch       → SwitchStep         conditions: List[dict], next
-  ├── For          → ForStep            value, in/range, index, steps
+  ├── For          → ForStep            value, in/range, index, steps  (alias: Loop)
   ├── Parallel     → ParallelStep       branches: List[tuple], shared, ...
-  ├── Try_         → TryStep            body, retry, except_as, except_steps
+  ├── Try_         → TryStep            body, retry, except_as, except_steps  (alias: DoTry)
   └── Steps        → NestedStepsStep    body, next
 ```
+
+Class aliases (`Returns`, `DoReturn`, `Raises`, `DoRaise`, `Loop`, `DoTry`) are simple assignments (`Returns = Return_`) — they reference the same class object, so `isinstance` checks and `apply()` type matching work transparently.
 
 Each `.build()` method constructs its corresponding Pydantic model. Pydantic validates field types, constraints (e.g. 1-50 assigns, mutual exclusivity of `in`/`range`), and alias mappings at that moment.
 
