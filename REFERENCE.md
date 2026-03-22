@@ -168,9 +168,11 @@ Every sub-builder has a `.build()` method that returns the corresponding Pydanti
 
 | Class | Description |
 |---|---|
-| `Workflow()` | Simple mode — chain steps directly, then `.build()` returns `SimpleWorkflow` |
-| `Workflow({"main": sub, "helper": sub})` | Multi-workflow mode — pass named `Subworkflow` instances, `.build()` returns `SubworkflowsWorkflow` |
+| `Workflow()` | Simple mode — chain steps directly, then call `()` or `.build()` to get `SimpleWorkflow` |
+| `Workflow({"main": sub, "helper": sub})` | Multi-workflow mode — pass named `Subworkflow` instances, call `()` to get `SubworkflowsWorkflow` |
 | `Subworkflow(params=[...])` | A named workflow with optional parameters |
+
+Calling a `Workflow` instance (`w()`) finalizes it. `.build()` is an alias that does the same thing.
 
 #### Legacy: WorkflowBuilder
 
@@ -179,10 +181,10 @@ Every sub-builder has a `.build()` method that returns the corresponding Pydanti
 ### `build()` Function
 
 ```python
-build(workflows: list[tuple[str, Workflow]], output_dir: str | Path = ".") -> list[Path]
+build(workflows: dict[str, Workflow], output_dir: str | Path = ".") -> list[Path]
 ```
 
-Writes each `(filename, workflow)` pair as a YAML file to `output_dir`. Creates directories as needed. Returns the list of written file paths.
+Writes each `{filename: workflow}` entry as a YAML file to `output_dir`. Creates directories as needed. Returns the list of written file paths. Values can be finalized models (`SimpleWorkflow`/`SubworkflowsWorkflow`) or unfinalized `Workflow` builder instances (auto-finalized).
 
 ---
 
@@ -272,6 +274,8 @@ The builder API provides friendlier names that avoid trailing underscores. These
 | `Try_.exception(error=)` | `.except_(as_=)` | |
 | `Switch.condition(returns=, raises=)` | `(return_=, raise_=)` | |
 | `Workflow` / `Subworkflow` | `WorkflowBuilder` | |
+| `Workflow()()` (callable) | `.build()` | Both finalize the workflow |
+| `build({...})` (dict) | `build([(...),...])` | Dict replaces list-of-tuples |
 
 ---
 
@@ -532,4 +536,4 @@ cloud-workflows-generator/
 PYTHONPATH=src python -m pytest tests/ -v
 ```
 
-431 tests: 263 validation (structural + expression + variable), 168 builder (step builder + workflow builder + CDK + build).
+436 tests: 263 validation (structural + expression + variable), 173 builder (step builder + workflow builder + CDK + build).

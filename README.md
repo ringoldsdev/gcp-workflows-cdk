@@ -11,15 +11,12 @@ pip install -e .
 ```python
 from cloud_workflows import Workflow, build, expr
 
-workflow = (
-    Workflow()
-    .assign("init", x=10, y=20)
-    .call("log", func="sys.log", args={"text": expr("x + y")})
-    .returns("done", value=expr("x + y"))
-    .build()
-)
-
-build([("workflow.yaml", workflow)])
+build({
+    "workflow.yaml": Workflow()
+        .assign("init", x=10, y=20)
+        .call("log", func="sys.log", args={"text": expr("x + y")})
+        .returns("done", value=expr("x + y")),
+})
 ```
 
 Output (`workflow.yaml`):
@@ -203,8 +200,7 @@ workflow = (
     .apply(logging_middleware("Workflow started"))
     .apply(error_handler())
     .returns("done", value=expr("r.body"))
-    .build()
-)
+)()
 ```
 
 ### Sub-builder `.apply()` — Merge Into Step Internals
@@ -233,12 +229,10 @@ def api_workflow(name, url):
         .returns("done", value=expr("response.body"))
     )
 
-workflows = [
-    ("users.yaml", Workflow().apply(api_workflow("users", "https://example.com/users")).build()),
-    ("orders.yaml", Workflow().apply(api_workflow("orders", "https://example.com/orders")).build()),
-]
-
-build(workflows, output_dir="output/")
+build({
+    "users.yaml": Workflow().apply(api_workflow("users", "https://example.com/users")),
+    "orders.yaml": Workflow().apply(api_workflow("orders", "https://example.com/orders")),
+}, output_dir="output/")
 ```
 
 ## Subworkflows
@@ -251,21 +245,16 @@ from cloud_workflows import Workflow, Subworkflow, build, expr
 main = Subworkflow().call("greet", func="make_greeting", args={"person": "Alice"}, result="msg").returns("done", value=expr("msg"))
 helper = Subworkflow(params=["person"]).assign("build", greeting=expr('"Hello, " + person')).returns("done", value=expr("greeting"))
 
-workflow = Workflow({"main": main, "helper": helper}).build()
+workflow = Workflow({"main": main, "helper": helper})()
 ```
 
 For simple workflows (no subworkflows, no params), chain steps directly on `Workflow`:
 
 ```python
-workflow = (
-    Workflow()
-    .assign("init", x=10)
-    .returns("done", value=expr("x"))
-    .build()
-)
+workflow = Workflow().assign("init", x=10).returns("done", value=expr("x"))()
 ```
 
-If only one workflow named "main" exists with no params, `build()` returns a `SimpleWorkflow` (flat list). Otherwise it returns a `SubworkflowsWorkflow` (dict of named workflows).
+Calling the `Workflow` instance (or `.build()`) returns a `SimpleWorkflow` (flat list) when there is a single "main" with no params, otherwise a `SubworkflowsWorkflow` (dict of named workflows). The standalone `build()` function auto-finalizes unfinalized `Workflow` objects, so you can pass them directly.
 
 ## Validation
 

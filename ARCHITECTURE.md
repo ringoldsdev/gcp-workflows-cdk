@@ -22,10 +22,11 @@ StepBuilder._append(name, body)           ← Wraps into Step(name, body)
 StepBuilder.build()                       ← Returns List[Step]
     │                                        (fully validated Pydantic models)
     ▼
-Workflow.build()                          ← Returns SimpleWorkflow or
+Workflow()() or Workflow.build()            ← Returns SimpleWorkflow or
     │                                        SubworkflowsWorkflow
     ▼
-build([("out.yaml", workflow)])           ← Serializes to YAML files
+build({"out.yaml": workflow})              ← Serializes to YAML files
+    │                                        (auto-finalizes Workflow objects)
     │
     ├─► workflow.to_dict()
     │     └─► model_dump(by_alias=True, exclude_none=True)

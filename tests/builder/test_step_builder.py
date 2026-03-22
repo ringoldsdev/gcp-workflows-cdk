@@ -59,7 +59,7 @@ from conftest import load_fixture
 
 def _to_dict(sb: StepBuilder) -> list:
     """Build steps into a SimpleWorkflow and serialize to dict."""
-    w = Workflow().apply(sb).build()
+    w = Workflow().apply(sb)()
     assert isinstance(w, SimpleWorkflow)
     return w.to_dict()
 
@@ -1227,8 +1227,7 @@ class TestMixedConstruction:
             Workflow()
             .raw("init", {"assign": [{"x": 1}]})
             .raw("done", {"return": expr("x + 1")})
-            .build()
-        )
+        )()
         assert w.to_dict() == [
             {"init": {"assign": [{"x": 1}]}},
             {"done": {"return": "${x + 1}"}},
@@ -1259,12 +1258,7 @@ class TestStepBuilderValidation:
     """Built workflows pass the full validation pipeline."""
 
     def test_simple_assign_validates(self):
-        w = (
-            Workflow()
-            .assign("init", x=10, y=20)
-            .returns("done", value=expr("x + y"))
-            .build()
-        )
+        w = Workflow().assign("init", x=10, y=20).returns("done", value=expr("x + y"))()
         result = analyze_workflow(w)
         assert result.is_valid
 
@@ -1284,7 +1278,7 @@ class TestStepBuilderValidation:
             .call("log", func="sys.log", args={"text": expr("input")})
             .returns("done", value="ok")
         )
-        w = Workflow({"main": main, "helper": helper}).build()
+        w = Workflow({"main": main, "helper": helper})()
         result = analyze_workflow(w)
         assert result.is_valid
 

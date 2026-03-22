@@ -31,12 +31,7 @@ class TestSimpleWorkflow:
     """Single workflow via Workflow inline chaining produces SimpleWorkflow."""
 
     def test_inline_chain(self):
-        w = (
-            Workflow()
-            .assign("init", x=10, y=20)
-            .returns("done", value=expr("x + y"))
-            .build()
-        )
+        w = Workflow().assign("init", x=10, y=20).returns("done", value=expr("x + y"))()
         assert isinstance(w, SimpleWorkflow)
         expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
         assert w.to_dict() == expected
@@ -72,7 +67,7 @@ class TestSubworkflows:
             .call("log", func="sys.log", args={"text": expr("input")})
             .returns("done", value="ok")
         )
-        w = Workflow({"main": main, "helper": helper}).build()
+        w = Workflow({"main": main, "helper": helper})()
         assert isinstance(w, SubworkflowsWorkflow)
         expected = yaml.safe_load(load_fixture("cdk", "subworkflows.yaml"))
         assert w.to_dict() == expected
@@ -80,7 +75,7 @@ class TestSubworkflows:
     def test_non_main_single_workflow(self):
         """Single workflow not named 'main' produces SubworkflowsWorkflow."""
         helper = Subworkflow().returns("done", value="ok")
-        w = Workflow({"helper": helper}).build()
+        w = Workflow({"helper": helper})()
         assert isinstance(w, SubworkflowsWorkflow)
 
 
@@ -93,7 +88,7 @@ class TestRoundTrip:
     """Build -> YAML -> parse -> compare."""
 
     def test_simple_round_trip(self):
-        w1 = Workflow().assign("init", x=10).returns("done", value=expr("x")).build()
+        w1 = Workflow().assign("init", x=10).returns("done", value=expr("x"))()
         w2 = parse_workflow(w1.to_yaml())
         assert w1.to_dict() == w2.to_dict()
 
@@ -104,7 +99,7 @@ class TestRoundTrip:
             .returns("s2", value=expr("r"))
         )
         helper = Subworkflow().returns("s1", value="ok")
-        w1 = Workflow({"main": main, "helper": helper}).build()
+        w1 = Workflow({"main": main, "helper": helper})()
         w2 = parse_workflow(w1.to_yaml())
         assert w1.to_dict() == w2.to_dict()
 
@@ -119,12 +114,12 @@ class TestWorkflowErrors:
 
     def test_no_steps_and_no_dict_raises(self):
         with pytest.raises(ValueError):
-            Workflow().build()
+            Workflow()()
 
     def test_empty_inline_chain_raises(self):
         """Workflow with no steps added inline should raise."""
         with pytest.raises(ValueError):
-            Workflow().build()
+            Workflow()()
 
     def test_both_inline_and_dict_raises(self):
         """Cannot have both inline steps and a subworkflow dict."""
@@ -132,11 +127,11 @@ class TestWorkflowErrors:
         w = Workflow({"main": sub})
         w.assign("init", x=1)
         with pytest.raises(ValueError):
-            w.build()
+            w()
 
     def test_empty_subworkflow_raises(self):
         with pytest.raises(ValueError, match="no steps"):
-            Workflow({"main": Subworkflow()}).build()
+            Workflow({"main": Subworkflow()})()
 
 
 # =============================================================================
@@ -232,7 +227,6 @@ class TestWorkflowChaining:
             .raw("s3", {"assign": [{"c": 3}]})
             .raw("s4", {"assign": [{"d": 4}]})
             .raw("s5", {"return": "${a + b + c + d}"})
-            .build()
-        )
+        )()
         assert isinstance(w, SimpleWorkflow)
         assert len(w.steps) == 5

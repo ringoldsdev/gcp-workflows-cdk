@@ -11,19 +11,16 @@ Workflow composes steps into SimpleWorkflow or SubworkflowsWorkflow.
 Workflow extends StepBuilder so you can chain steps directly:
 
     # Simple workflow:
-    w = (Workflow()
-        .assign("init", x=10, y=20)
-        .returns("done", value=expr("x + y"))
-        .build())
+    w = Workflow().assign("init", x=10, y=20).returns("done", value=expr("x + y"))()
 
     # Multi-workflow with subworkflows:
     main = Subworkflow().assign("init", x=10).returns("done", value=expr("x"))
     helper = Subworkflow(params=["n"]).returns("done", value=expr("n"))
-    w = Workflow({"main": main, "helper": helper}).build()
+    w = Workflow({"main": main, "helper": helper})()
 
 Write results to disk with build():
 
-    build([("my_workflow.yaml", w)])
+    build({"my_workflow.yaml": w})
 """
 
 from __future__ import annotations
@@ -54,7 +51,7 @@ from .models import (
     SubworkflowsWorkflow,
     SwitchStep,
     TryStep,
-    Workflow,
+    Workflow as WorkflowModel,
     WorkflowDefinition,
 )
 from .steps import (
@@ -616,21 +613,19 @@ class Subworkflow(StepBuilder):
 class Workflow(StepBuilder):
     """Build a Cloud Workflow, either as a simple step chain or multi-workflow.
 
-    **Simple workflow** — chain steps directly::
+    **Simple workflow** — chain steps directly, then call the instance::
 
-        w = (Workflow()
-            .assign("init", x=10, y=20)
-            .returns("done", value=expr("x + y"))
-            .build())
+        w = Workflow().assign("init", x=10, y=20).returns("done", value=expr("x + y"))()
 
     **Multi-workflow** — pass a dict of name -> Subworkflow::
 
         main = Subworkflow().assign("init", x=10).returns("done", value=expr("x"))
         helper = Subworkflow(params=["n"]).returns("done", value=expr("n"))
-        w = Workflow({"main": main, "helper": helper}).build()
+        w = Workflow({"main": main, "helper": helper})()
 
-    ``build()`` returns :class:`SimpleWorkflow` when there is a single "main"
-    with no params, otherwise :class:`SubworkflowsWorkflow`.
+    Calling the instance (or ``.build()``) returns :class:`SimpleWorkflow`
+    when there is a single "main" with no params, otherwise
+    :class:`SubworkflowsWorkflow`.
     """
 
     def __init__(
@@ -695,6 +690,15 @@ class Workflow(StepBuilder):
                 steps=list(wf._steps),
             )
         return SubworkflowsWorkflow(workflows=workflows)
+
+    def __call__(self) -> Union[SimpleWorkflow, SubworkflowsWorkflow]:
+        """Finalize the workflow. Same as ``.build()``.
+
+        Example::
+
+            w = Workflow().assign("init", x=10).returns("done", value=expr("x"))()
+        """
+        return self.build()
 
 
 # =============================================================================
@@ -804,18 +808,19 @@ class WorkflowBuilder:
 
 
 def build(
-    workflows: List[tuple[str, Workflow]],
+    workflows: Dict[str, Union[WorkflowModel, Workflow]],
     output_dir: Union[str, Path] = ".",
 ) -> List[Path]:
     """Build workflow definitions and write them to YAML files.
 
-    Each entry in ``workflows`` is a ``(filename, workflow)`` tuple where
-    *filename* is a relative path (e.g. ``"my_flow.yaml"``) and *workflow*
-    is a ``SimpleWorkflow`` or ``SubworkflowsWorkflow`` instance — typically
-    produced by ``Workflow.build()``.
+    ``workflows`` is a dict mapping filenames to workflow objects. Values
+    can be finalized models (``SimpleWorkflow`` / ``SubworkflowsWorkflow``)
+    or unfinalized ``Workflow`` builder instances (which are automatically
+    finalized by calling them).
 
     Args:
-        workflows: List of ``(filename, workflow)`` pairs.
+        workflows: Dict of ``{filename: workflow}``.  Filenames are relative
+            paths (e.g. ``"my_flow.yaml"``).
         output_dir: Directory to write files into. Defaults to the current
             working directory. Created automatically if it does not exist.
 
@@ -823,42 +828,43 @@ def build(
         List of ``Path`` objects for every file that was written.
 
     Raises:
-        TypeError: If any entry is not a valid ``(str, Workflow)`` tuple.
-        ValueError: If the workflows list is empty.
+        TypeError: If any value is not a workflow model or Workflow builder.
+        ValueError: If the workflows dict is empty.
 
     Example::
 
         from cloud_workflows import Workflow, build, expr
 
-        w = (Workflow()
-            .assign("init", x=10, y=20)
-            .returns("done", value=expr("x + y"))
-            .build())
-
-        build([("my_workflow.yaml", w)])
+        build({
+            "my_workflow.yaml": Workflow()
+                .assign("init", x=10, y=20)
+                .returns("done", value=expr("x + y")),
+        })
     """
     if not workflows:
-        raise ValueError("workflows list must not be empty")
+        raise ValueError("workflows must not be empty")
+
+    if not isinstance(workflows, dict):
+        raise TypeError(f"workflows must be a dict, got {type(workflows).__name__}")
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     written: List[Path] = []
-    for entry in workflows:
-        if (
-            not isinstance(entry, tuple)
-            or len(entry) != 2
-            or not isinstance(entry[0], str)
-        ):
+    for filename, workflow in workflows.items():
+        if not isinstance(filename, str):
             raise TypeError(
-                f"Each entry must be a (str, Workflow) tuple, got {type(entry).__name__}"
+                f"Workflow filename must be a string, got {type(filename).__name__}"
             )
 
-        filename, workflow = entry
+        # Auto-finalize Workflow builder instances
+        if isinstance(workflow, Workflow):
+            workflow = workflow()
+
         if not isinstance(workflow, (SimpleWorkflow, SubworkflowsWorkflow)):
             raise TypeError(
-                f"Workflow must be SimpleWorkflow or SubworkflowsWorkflow, "
-                f"got {type(workflow).__name__}"
+                f"Workflow value must be SimpleWorkflow, SubworkflowsWorkflow, "
+                f"or Workflow builder, got {type(workflow).__name__}"
             )
 
         path = out / filename
