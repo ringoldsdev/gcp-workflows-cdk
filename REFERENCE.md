@@ -147,10 +147,10 @@ Steps(*, params=None)
 `.step()` and `.merge()` return `self`, enabling fluent chains:
 
 ```python
-s = Steps() \
-    .step("init", Assign(x=10)) \
-    .step("log", Call("sys.log", args={"text": expr("x")})) \
-    .step("done", Return(expr("x")))
+s = (Steps()
+    .step("init", Assign(x=10))
+    .step("log", Call("sys.log", args={"text": expr("x")}))
+    .step("done", Return(expr("x"))))
 ```
 
 ### Step Classes
@@ -339,25 +339,25 @@ Each workflow value must be a `dict[str, Steps]` with a required `"main"` key:
 Steps containers are composable via `.merge()`:
 
 ```python
-common = Steps() \
-    .step("log", Call("sys.log", args={"text": "starting"}))
+common = (Steps()
+    .step("log", Call("sys.log", args={"text": "starting"})))
 
-main = Steps() \
-    .merge(common) \
-    .step("done", Return("ok"))
+main = (Steps()
+    .merge(common)
+    .step("done", Return("ok")))
 ```
 
 Factory functions that return `Steps` instances are the primary composition pattern:
 
 ```python
 def logging_steps(message):
-    return Steps() \
-        .step("log", Call("sys.log", args={"text": message}))
+    return (Steps()
+        .step("log", Call("sys.log", args={"text": message})))
 
-main = Steps() \
-    .step("init", Assign(status="starting")) \
-    .merge(logging_steps("Workflow started")) \
-    .step("done", Return("ok"))
+main = (Steps()
+    .step("init", Assign(status="starting"))
+    .merge(logging_steps("Workflow started"))
+    .step("done", Return("ok")))
 ```
 
 ---

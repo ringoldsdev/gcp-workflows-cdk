@@ -11,10 +11,10 @@ pip install -e .
 ```python
 from cloud_workflows import Steps, Assign, Call, Return, build, expr
 
-s = Steps() \
-    .step("init", Assign(x=10, y=20)) \
-    .step("log", Call("sys.log", args={"text": expr("x + y")})) \
-    .step("done", Return(expr("x + y")))
+s = (Steps()
+    .step("init", Assign(x=10, y=20))
+    .step("log", Call("sys.log", args={"text": expr("x + y")}))
+    .step("done", Return(expr("x + y"))))
 
 build({"workflow.yaml": {"main": s}})
 ```
@@ -76,15 +76,15 @@ Produces:
 ### Call
 
 ```python
-s.step("fetch", Call("http.get", args={"url": "https://example.com"}, result="response")) \
- .step("log", Call("sys.log", args={"text": expr("response.body")}, next="done"))
+(s.step("fetch", Call("http.get", args={"url": "https://example.com"}, result="response"))
+  .step("log", Call("sys.log", args={"text": expr("response.body")}, next="done")))
 ```
 
 ### Return / Raise
 
 ```python
-s.step("done", Return(expr("response.body"))) \
- .step("fail", Raise({"code": 404, "message": "Not found"}))
+(s.step("done", Return(expr("response.body")))
+  .step("fail", Raise({"code": 404, "message": "Not found"})))
 ```
 
 ### Switch
@@ -105,8 +105,8 @@ s.step("check", Switch([
 from cloud_workflows import For
 
 # With Steps container
-inner = Steps() \
-    .step("log", Call("sys.log", args={"text": expr("item")}))
+inner = (Steps()
+    .step("log", Call("sys.log", args={"text": expr("item")})))
 
 s.step("loop", For(value="item", items=["a", "b", "c"], steps=inner))
 
@@ -123,11 +123,11 @@ s.step("loop", For(
 ```python
 from cloud_workflows import Parallel
 
-b1 = Steps() \
-    .step("get_users", Call("http.get", args={"url": "https://example.com/users"}, result="users"))
+b1 = (Steps()
+    .step("get_users", Call("http.get", args={"url": "https://example.com/users"}, result="users")))
 
-b2 = Steps() \
-    .step("get_orders", Call("http.get", args={"url": "https://example.com/orders"}, result="orders"))
+b2 = (Steps()
+    .step("get_orders", Call("http.get", args={"url": "https://example.com/orders"}, result="orders")))
 
 s.step("work", Parallel(
     branches={"fetch_users": b1, "fetch_orders": b2},
@@ -147,12 +147,12 @@ s.step("work", Parallel(branches={
 ```python
 from cloud_workflows import Try, Retry, Backoff
 
-body = Steps() \
-    .step("fetch", Call("http.get", args={"url": "https://example.com"}, result="resp"))
+body = (Steps()
+    .step("fetch", Call("http.get", args={"url": "https://example.com"}, result="resp")))
 
-except_steps = Steps() \
-    .step("log", Call("sys.log", args={"text": expr("e.message")})) \
-    .step("rethrow", Raise(expr("e")))
+except_steps = (Steps()
+    .step("log", Call("sys.log", args={"text": expr("e.message")}))
+    .step("rethrow", Raise(expr("e"))))
 
 s.step("safe_call", Try(
     steps=body,
@@ -182,9 +182,9 @@ s.step("safe_call", Try(
 ```python
 from cloud_workflows import NestedSteps
 
-inner = Steps() \
-    .step("step_a", Call("sys.log", args={"text": "a"})) \
-    .step("step_b", Call("sys.log", args={"text": "b"}))
+inner = (Steps()
+    .step("step_a", Call("sys.log", args={"text": "a"}))
+    .step("step_b", Call("sys.log", args={"text": "b"})))
 
 s.step("group", NestedSteps(steps=inner, next="done"))
 ```
@@ -227,10 +227,10 @@ concat([expr("prefix"), expr("suffix")])
 Use it anywhere an expression string is expected:
 
 ```python
-s = Steps() \
-    .step("init", Assign(first="Jane", last="Doe")) \
-    .step("greet", Assign(greeting=concat(["Hello, ", expr("first"), " ", expr("last"), "!"]))) \
-    .step("done", Return(expr("greeting")))
+s = (Steps()
+    .step("init", Assign(first="Jane", last="Doe"))
+    .step("greet", Assign(greeting=concat(["Hello, ", expr("first"), " ", expr("last"), "!"])))
+    .step("done", Return(expr("greeting"))))
 ```
 
 ## Composition
@@ -240,10 +240,10 @@ s = Steps() \
 `.step()` and `.merge()` return `self` for fluent chaining:
 
 ```python
-s = Steps() \
-    .step("init", Assign(x=10)) \
-    .step("log", Call("sys.log", args={"text": expr("x")})) \
-    .step("done", Return(expr("x")))
+s = (Steps()
+    .step("init", Assign(x=10))
+    .step("log", Call("sys.log", args={"text": expr("x")}))
+    .step("done", Return(expr("x"))))
 ```
 
 ### Merging Steps
@@ -252,22 +252,22 @@ Use `.merge()` to append steps from another container:
 
 ```python
 def logging_steps(message):
-    return Steps() \
-        .step("log", Call("sys.log", args={"text": message}))
+    return (Steps()
+        .step("log", Call("sys.log", args={"text": message})))
 
 def error_handler():
-    body = Steps() \
-        .step("op", Call("http.get", args={"url": "https://example.com"}, result="r"))
-    except_steps = Steps() \
-        .step("fail", Raise(expr("e")))
-    return Steps() \
-        .step("safe", Try(steps=body, error_steps=except_steps))
+    body = (Steps()
+        .step("op", Call("http.get", args={"url": "https://example.com"}, result="r")))
+    except_steps = (Steps()
+        .step("fail", Raise(expr("e"))))
+    return (Steps()
+        .step("safe", Try(steps=body, error_steps=except_steps)))
 
-main = Steps() \
-    .step("init", Assign(status="starting")) \
-    .merge(logging_steps("Workflow started")) \
-    .merge(error_handler()) \
-    .step("done", Return(expr("r.body")))
+main = (Steps()
+    .step("init", Assign(status="starting"))
+    .merge(logging_steps("Workflow started"))
+    .merge(error_handler())
+    .step("done", Return(expr("r.body"))))
 ```
 
 ### Callables for Inline Steps
@@ -288,10 +288,10 @@ s.step("loop", For(
 from cloud_workflows import Steps, Assign, Call, Return, build, expr
 
 def api_workflow(url):
-    return Steps() \
-        .step("init", Assign(endpoint=url)) \
-        .step("fetch", Call("http.get", args={"url": expr("endpoint")}, result="response")) \
-        .step("done", Return(expr("response.body")))
+    return (Steps()
+        .step("init", Assign(endpoint=url))
+        .step("fetch", Call("http.get", args={"url": expr("endpoint")}, result="response"))
+        .step("done", Return(expr("response.body"))))
 
 build({
     "users.yaml": {"main": api_workflow("https://example.com/users")},
@@ -306,13 +306,13 @@ For workflows with multiple subworkflows or runtime parameters, use `Steps(param
 ```python
 from cloud_workflows import Steps, Assign, Call, Return, build, expr
 
-main = Steps() \
-    .step("greet", Call("make_greeting", args={"person": "Alice"}, result="msg")) \
-    .step("done", Return(expr("msg")))
+main = (Steps()
+    .step("greet", Call("make_greeting", args={"person": "Alice"}, result="msg"))
+    .step("done", Return(expr("msg"))))
 
 helper = Steps(params=["person"])
-helper.step("build", Assign(greeting=expr('"Hello, " + person'))) \
-      .step("done", Return(expr("greeting")))
+(helper.step("build", Assign(greeting=expr('"Hello, " + person')))
+       .step("done", Return(expr("greeting"))))
 
 build({"workflow.yaml": {"main": main, "helper": helper}})
 ```
@@ -321,9 +321,9 @@ build({"workflow.yaml": {"main": main, "helper": helper}})
 
 ```python
 # Single simple workflow:
-s = Steps() \
-    .step("init", Assign(x=10)) \
-    .step("done", Return(expr("x")))
+s = (Steps()
+    .step("init", Assign(x=10))
+    .step("done", Return(expr("x"))))
 build({"workflow.yaml": {"main": s}})
 ```
 
