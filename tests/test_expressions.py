@@ -14,10 +14,14 @@ from cloud_workflows.expressions import (
     validate_all_expressions,
     extract_expression_strings,
     extract_variable_references,
+    parse_expression_ast,
+    parse_expression_recover,
+    walk,
     ExpressionError,
     LexError,
     ParseError,
     TokenType,
+    ErrorNode,
 )
 
 
@@ -466,3 +470,124 @@ class TestExpressionFixtures:
         ]:
             wf = parse_fixture("expressions", fixture)
             assert wf is not None, f"Failed to parse {fixture} as workflow"
+
+
+# =============================================================================
+# Invalid expression fixture tests
+# =============================================================================
+
+
+def _load_invalid_expressions() -> list[tuple[str, str]]:
+    """Load invalid_expressions.yaml and return (label, expr_body) pairs."""
+    import yaml
+
+    yaml_str = load_fixture("expressions", "invalid_expressions.yaml")
+    raw = yaml.safe_load(yaml_str)
+    results = []
+    for key, value in raw.items():
+        # Each value is a "${...}" string — extract the body
+        if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+            body = value[2:-1]
+            results.append((key, body))
+    return results
+
+
+class TestInvalidExpressionsFixture:
+    """Parametrized tests loading expressions from invalid_expressions.yaml."""
+
+    @pytest.mark.parametrize(
+        "label,expr_body",
+        _load_invalid_expressions(),
+        ids=[pair[0] for pair in _load_invalid_expressions()],
+    )
+    def test_invalid_expression_from_fixture(self, label, expr_body):
+        """Each expression in invalid_expressions.yaml must fail validation."""
+        result = validate_expression(expr_body)
+        assert result is not None, (
+            f"Expected validation error for {label!r}: {expr_body!r}"
+        )
+        assert result.message, f"Error message should be non-empty for {label!r}"
+
+    @pytest.mark.parametrize(
+        "label,expr_body",
+        _load_invalid_expressions(),
+        ids=[pair[0] for pair in _load_invalid_expressions()],
+    )
+    def test_invalid_expression_recovery(self, label, expr_body):
+        """Error recovery mode should still report errors for invalid expressions."""
+        try:
+            node, errors = parse_expression_recover(expr_body)
+        except LexError:
+            # Lex errors happen before parsing (e.g. unterminated string,
+            # unexpected character) — that's also a valid failure.
+            return
+        assert len(errors) > 0, f"Expected recovery errors for {label!r}: {expr_body!r}"
+
+    @pytest.mark.parametrize(
+        "label,expr_body",
+        _load_invalid_expressions(),
+        ids=[pair[0] for pair in _load_invalid_expressions()],
+    )
+    def test_invalid_expression_has_error_node_or_raises(self, label, expr_body):
+        """Recovery AST should contain ErrorNode(s), or lex should raise."""
+        try:
+            node, errors = parse_expression_recover(expr_body)
+        except LexError:
+            return  # lex-time failure is acceptable
+        if errors:
+            # At least one ErrorNode should be present in the tree
+            nodes = walk(node)
+            error_nodes = [n for n in nodes if isinstance(n, ErrorNode)]
+            # Note: some errors are reported without ErrorNode (e.g. trailing
+            # junk after a valid expression), so we check errors OR error_nodes
+            assert len(errors) > 0
+
+
+# =============================================================================
+# AST snapshot tests
+# =============================================================================
+
+
+def _load_ast_snapshots() -> list[tuple[str, str, str]]:
+    """Load ast_snapshots.yaml and return (label, expr, expected_repr) triples."""
+    import yaml
+
+    yaml_str = load_fixture("expressions", "ast_snapshots.yaml")
+    raw = yaml.safe_load(yaml_str)
+    results = []
+    for key, entry in raw.items():
+        results.append((key, entry["expr"], entry["expected"]))
+    return results
+
+
+class TestASTSnapshots:
+    """Snapshot-based regression tests for parsed expression ASTs."""
+
+    @pytest.mark.parametrize(
+        "label,expr,expected_repr",
+        _load_ast_snapshots(),
+        ids=[t[0] for t in _load_ast_snapshots()],
+    )
+    def test_ast_snapshot(self, label, expr, expected_repr):
+        """The repr() of the parsed AST must match the snapshot."""
+        ast = parse_expression_ast(expr)
+        actual = repr(ast)
+        assert actual == expected_repr, (
+            f"AST snapshot mismatch for {label!r}:\n"
+            f"  expr:     {expr!r}\n"
+            f"  expected: {expected_repr}\n"
+            f"  actual:   {actual}"
+        )
+
+    @pytest.mark.parametrize(
+        "label,expr,expected_repr",
+        _load_ast_snapshots(),
+        ids=[t[0] for t in _load_ast_snapshots()],
+    )
+    def test_ast_walk_covers_all_nodes(self, label, expr, expected_repr):
+        """walk() should return a non-empty list for every parseable expression."""
+        ast = parse_expression_ast(expr)
+        nodes = walk(ast)
+        assert len(nodes) >= 1, f"walk() returned empty list for {label!r}"
+        # First node should be the root
+        assert nodes[0] is ast

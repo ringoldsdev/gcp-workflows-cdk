@@ -1,8 +1,8 @@
 """Expression parser and validator for GCP Cloud Workflows ${...} expressions.
 
-Implements a recursive-descent parser that validates the syntax of expressions
-found inside ${...} wrappers. Does NOT evaluate expressions -- only checks that
-they are syntactically valid according to the GCP Cloud Workflows expression spec.
+Implements a Pratt (top-down operator precedence) parser that validates the
+syntax of expressions found inside ${...} wrappers, producing a lightweight
+AST of dataclass nodes for downstream analysis and snapshot testing.
 
 Grammar (informal):
     expression     -> or_expr
@@ -12,7 +12,7 @@ Grammar (informal):
     comparison     -> addition (("==" | "!=" | "<=" | ">=" | "<" | ">") addition)?
     addition       -> multiplication (("+" | "-") multiplication)*
     multiplication -> unary (("*" | "/" | "%") unary)*
-    unary          -> "-" unary | primary_postfix
+    unary          -> "-" unary | "not" "(" expression ")" | primary_postfix
     primary_postfix-> primary (accessor)*
     accessor       -> "." IDENT | "[" expression "]" | "(" arguments? ")"
     primary        -> NUMBER | STRING | "true" | "false" | "null"
@@ -107,6 +107,149 @@ class Token:
 
 
 # =============================================================================
+# AST node types
+# =============================================================================
+
+
+@dataclass
+class NumberLiteral:
+    """Integer or floating-point literal."""
+
+    value: str
+    pos: int
+
+
+@dataclass
+class StringLiteral:
+    """String literal (quotes already removed)."""
+
+    value: str
+    pos: int
+
+
+@dataclass
+class BoolLiteral:
+    """true / false literal."""
+
+    value: bool
+    pos: int
+
+
+@dataclass
+class NullLiteral:
+    """null literal."""
+
+    pos: int
+
+
+@dataclass
+class Identifier:
+    """Variable or function name."""
+
+    name: str
+    pos: int
+
+
+@dataclass
+class UnaryOp:
+    """Unary operator (e.g. -x, not(...))."""
+
+    op: str
+    operand: Node
+    pos: int
+
+
+@dataclass
+class BinaryOp:
+    """Binary operator (arithmetic, comparison, logical, membership)."""
+
+    op: str
+    left: Node
+    right: Node
+    pos: int
+
+
+@dataclass
+class MemberAccess:
+    """Dot access: obj.field."""
+
+    object: Node
+    field: str
+    pos: int
+
+
+@dataclass
+class IndexAccess:
+    """Bracket access: obj[index]."""
+
+    object: Node
+    index: Node
+    pos: int
+
+
+@dataclass
+class FunctionCall:
+    """Function call: func(args...)."""
+
+    function: Node
+    args: list[Node]
+    pos: int
+
+
+@dataclass
+class ListLiteral:
+    """List literal: [a, b, c]."""
+
+    elements: list[Node]
+    pos: int
+
+
+@dataclass
+class MapEntry:
+    """Single key-value pair in a map literal."""
+
+    key: Node
+    value: Node
+    pos: int
+
+
+@dataclass
+class MapLiteral:
+    """Map literal: {"a": 1, "b": 2}."""
+
+    entries: list[MapEntry]
+    pos: int
+
+
+@dataclass
+class ErrorNode:
+    """Placeholder for a failed parse (error recovery)."""
+
+    message: str
+    pos: int
+    children: list[Node] = field(default_factory=list)
+
+
+# Union of all AST node types
+Node = (
+    NumberLiteral
+    | StringLiteral
+    | BoolLiteral
+    | NullLiteral
+    | Identifier
+    | UnaryOp
+    | BinaryOp
+    | MemberAccess
+    | IndexAccess
+    | FunctionCall
+    | ListLiteral
+    | MapEntry
+    | MapLiteral
+    | ErrorNode
+)
+
+
+# =============================================================================
 # Lexer
 # =============================================================================
 
@@ -127,334 +270,484 @@ class ParseError(Exception):
         super().__init__(message)
 
 
-# Regex patterns for tokens, tried in order
-_NUMBER_RE = re.compile(r"(\d+\.\d*|\.\d+|\d+)")
-_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
-_WHITESPACE_RE = re.compile(r"\s+")
+# ---------------------------------------------------------------------------
+# Unified master regex – compiled once at module load time.
+#
+# Named groups are ordered by specificity (longest match first).  The
+# ``re.finditer`` engine tries alternatives left-to-right, so two-char
+# operators (==, !=, <=, >=) MUST precede their single-char prefixes.
+#
+# Strings use a regex that matches the full literal including escape
+# sequences (``"(?:[^"\\]|\\.)*"`` and the single-quote variant).
+# Unterminated strings are caught separately (the quote character won't
+# match any named group and falls through to MISMATCH).
+# ---------------------------------------------------------------------------
+_TOKEN_PATTERNS: list[tuple[str, str]] = [
+    # Whitespace (skipped)
+    ("SKIP", r"\s+"),
+    # String literals (full, including escapes)
+    ("STRING_DQ", r'"(?:[^"\\]|\\.)*"'),
+    ("STRING_SQ", r"'(?:[^'\\]|\\.)*'"),
+    # Numbers – order: float variants before plain integer
+    ("DOUBLE", r"\d+\.\d*|\.\d+"),
+    ("INTEGER", r"\d+"),
+    # Two-character operators (before single-char)
+    ("EQ", r"=="),
+    ("NEQ", r"!="),
+    ("LTE", r"<="),
+    ("GTE", r">="),
+    # Single-character operators
+    ("PLUS", r"\+"),
+    ("MINUS", r"-"),
+    ("STAR", r"\*"),
+    ("SLASH", r"/"),
+    ("PERCENT", r"%"),
+    ("LT", r"<"),
+    ("GT", r">"),
+    # Delimiters
+    ("LPAREN", r"\("),
+    ("RPAREN", r"\)"),
+    ("LBRACKET", r"\["),
+    ("RBRACKET", r"\]"),
+    ("LBRACE", r"\{"),
+    ("RBRACE", r"\}"),
+    ("DOT", r"\."),
+    ("COMMA", r","),
+    ("COLON", r":"),
+    # Identifiers / keywords (checked after operators)
+    ("IDENT", r"[A-Za-z_][A-Za-z_0-9]*"),
+    # Catch-all for unexpected characters
+    ("MISMATCH", r"."),
+]
+
+_MASTER_RE = re.compile(
+    "|".join(f"(?P<{name}>{pattern})" for name, pattern in _TOKEN_PATTERNS)
+)
+
+# Mapping from master-regex group names to TokenType (excluding SKIP/MISMATCH)
+_GROUP_TO_TYPE: dict[str, TokenType] = {
+    "STRING_DQ": TokenType.STRING,
+    "STRING_SQ": TokenType.STRING,
+    "DOUBLE": TokenType.DOUBLE,
+    "INTEGER": TokenType.INTEGER,
+    "EQ": TokenType.EQ,
+    "NEQ": TokenType.NEQ,
+    "LTE": TokenType.LTE,
+    "GTE": TokenType.GTE,
+    "PLUS": TokenType.PLUS,
+    "MINUS": TokenType.MINUS,
+    "STAR": TokenType.STAR,
+    "SLASH": TokenType.SLASH,
+    "PERCENT": TokenType.PERCENT,
+    "LT": TokenType.LT,
+    "GT": TokenType.GT,
+    "LPAREN": TokenType.LPAREN,
+    "RPAREN": TokenType.RPAREN,
+    "LBRACKET": TokenType.LBRACKET,
+    "RBRACKET": TokenType.RBRACKET,
+    "LBRACE": TokenType.LBRACE,
+    "RBRACE": TokenType.RBRACE,
+    "DOT": TokenType.DOT,
+    "COMMA": TokenType.COMMA,
+    "COLON": TokenType.COLON,
+    "IDENT": TokenType.IDENT,
+}
+
+# Escape sequences recognized inside string literals
+_ESCAPE_MAP: dict[str, str] = {
+    "n": "\n",
+    "t": "\t",
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+}
 
 
-def _lex_string(source: str, pos: int) -> tuple[Token, int]:
-    """Lex a string literal starting at pos (which must be ' or ")."""
-    quote = source[pos]
+def _decode_string(raw: str, pos: int) -> str:
+    """Decode escape sequences in a matched string literal.
+
+    *raw* is the regex-matched text **including** surrounding quotes.
+    Returns the unescaped content (quotes stripped).
+    """
+    inner = raw[1:-1]  # strip surrounding quotes
     result: list[str] = []
-    i = pos + 1
-    while i < len(source):
-        ch = source[i]
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
         if ch == "\\":
-            if i + 1 >= len(source):
-                raise LexError(f"Unterminated escape at position {i}", i)
-            next_ch = source[i + 1]
-            escape_map = {"n": "\n", "t": "\t", "\\": "\\", "'": "'", '"': '"'}
-            if next_ch in escape_map:
-                result.append(escape_map[next_ch])
-                i += 2
-            else:
-                # Allow unknown escapes to pass through
-                result.append(next_ch)
-                i += 2
-        elif ch == quote:
-            return Token(TokenType.STRING, "".join(result), pos), i + 1
+            if i + 1 >= len(inner):
+                raise LexError(
+                    f"Unterminated escape at position {pos + i + 1}", pos + i + 1
+                )
+            nxt = inner[i + 1]
+            result.append(_ESCAPE_MAP.get(nxt, nxt))
+            i += 2
         else:
             result.append(ch)
             i += 1
-    raise LexError(f"Unterminated string starting at position {pos}", pos)
+    return "".join(result)
 
 
 def tokenize(source: str) -> list[Token]:
-    """Tokenize a Cloud Workflows expression (content inside ${...})."""
+    """Tokenize a Cloud Workflows expression (content inside ${...}).
+
+    Uses a single compiled master regex with ``re.finditer`` for a fast,
+    single-pass scan through the C-level regex engine.
+    """
     tokens: list[Token] = []
-    i = 0
-    length = len(source)
 
-    while i < length:
-        # Skip whitespace
-        m = _WHITESPACE_RE.match(source, i)
-        if m:
-            i = m.end()
+    for m in _MASTER_RE.finditer(source):
+        kind: str = m.lastgroup or "MISMATCH"
+        text = m.group()
+        pos = m.start()
+
+        if kind == "SKIP":
             continue
 
-        ch = source[i]
+        if kind == "MISMATCH":
+            # Distinguish unterminated strings from truly unexpected chars
+            if text in ('"', "'"):
+                raise LexError(f"Unterminated string starting at position {pos}", pos)
+            raise LexError(f"Unexpected character {text!r} at position {pos}", pos)
 
-        # Two-character operators
-        if i + 1 < length:
-            two = source[i : i + 2]
-            if two == "==":
-                tokens.append(Token(TokenType.EQ, "==", i))
-                i += 2
-                continue
-            elif two == "!=":
-                tokens.append(Token(TokenType.NEQ, "!=", i))
-                i += 2
-                continue
-            elif two == "<=":
-                tokens.append(Token(TokenType.LTE, "<=", i))
-                i += 2
-                continue
-            elif two == ">=":
-                tokens.append(Token(TokenType.GTE, ">=", i))
-                i += 2
-                continue
-
-        # Single-character operators and delimiters
-        single_map = {
-            "+": TokenType.PLUS,
-            "-": TokenType.MINUS,
-            "*": TokenType.STAR,
-            "/": TokenType.SLASH,
-            "%": TokenType.PERCENT,
-            "<": TokenType.LT,
-            ">": TokenType.GT,
-            "(": TokenType.LPAREN,
-            ")": TokenType.RPAREN,
-            "[": TokenType.LBRACKET,
-            "]": TokenType.RBRACKET,
-            "{": TokenType.LBRACE,
-            "}": TokenType.RBRACE,
-            ".": TokenType.DOT,
-            ",": TokenType.COMMA,
-            ":": TokenType.COLON,
-        }
-        if ch in single_map:
-            tokens.append(Token(single_map[ch], ch, i))
-            i += 1
+        if kind in ("STRING_DQ", "STRING_SQ"):
+            tokens.append(Token(TokenType.STRING, _decode_string(text, pos), pos))
             continue
 
-        # String literals
-        if ch in ('"', "'"):
-            tok, i = _lex_string(source, i)
-            tokens.append(tok)
-            continue
+        tt = _GROUP_TO_TYPE[kind]
 
-        # Numbers
-        m = _NUMBER_RE.match(source, i)
-        if m and (not source[i].isalpha()):
-            num_str = m.group(0)
-            if "." in num_str:
-                tokens.append(Token(TokenType.DOUBLE, num_str, i))
-            else:
-                tokens.append(Token(TokenType.INTEGER, num_str, i))
-            i = m.end()
-            continue
+        # Resolve identifiers vs keywords
+        if tt is TokenType.IDENT:
+            tt = KEYWORDS.get(text, TokenType.IDENT)
 
-        # Identifiers and keywords
-        m = _IDENT_RE.match(source, i)
-        if m:
-            word = m.group(0)
-            tt = KEYWORDS.get(word, TokenType.IDENT)
-            tokens.append(Token(tt, word, i))
-            i = m.end()
-            continue
+        tokens.append(Token(tt, text, pos))
 
-        raise LexError(f"Unexpected character {ch!r} at position {i}", i)
-
-    tokens.append(Token(TokenType.EOF, "", length))
+    tokens.append(Token(TokenType.EOF, "", len(source)))
     return tokens
 
 
 # =============================================================================
-# Parser
+# Pratt parser  (top-down operator precedence)
 # =============================================================================
+
+# ---------------------------------------------------------------------------
+# Binding power table
+#
+# Each infix/postfix operator maps to (left_bp, right_bp).  Left-associative
+# ops have right_bp = left_bp + 1; right-associative: right_bp = left_bp.
+# Postfix operators (. [] ()) have the highest binding power and are handled
+# as LED (left denotation) entries inside the main Pratt loop.
+# ---------------------------------------------------------------------------
+
+_BP_OR = 2
+_BP_AND = 4
+_BP_MEMBERSHIP = 6
+_BP_COMPARISON = 8
+_BP_ADDITION = 10
+_BP_MULTIPLICATION = 12
+_BP_UNARY = 14  # prefix operators
+_BP_POSTFIX = 16  # . [] ()
+
+# infix token → (left_bp, right_bp, op_string)
+_INFIX_BP: dict[TokenType, tuple[int, int, str]] = {
+    TokenType.OR: (_BP_OR, _BP_OR + 1, "or"),
+    TokenType.AND: (_BP_AND, _BP_AND + 1, "and"),
+    TokenType.IN: (_BP_MEMBERSHIP, _BP_MEMBERSHIP + 1, "in"),
+    TokenType.EQ: (_BP_COMPARISON, _BP_COMPARISON + 1, "=="),
+    TokenType.NEQ: (_BP_COMPARISON, _BP_COMPARISON + 1, "!="),
+    TokenType.LT: (_BP_COMPARISON, _BP_COMPARISON + 1, "<"),
+    TokenType.LTE: (_BP_COMPARISON, _BP_COMPARISON + 1, "<="),
+    TokenType.GT: (_BP_COMPARISON, _BP_COMPARISON + 1, ">"),
+    TokenType.GTE: (_BP_COMPARISON, _BP_COMPARISON + 1, ">="),
+    TokenType.PLUS: (_BP_ADDITION, _BP_ADDITION + 1, "+"),
+    TokenType.MINUS: (_BP_ADDITION, _BP_ADDITION + 1, "-"),
+    TokenType.STAR: (_BP_MULTIPLICATION, _BP_MULTIPLICATION + 1, "*"),
+    TokenType.SLASH: (_BP_MULTIPLICATION, _BP_MULTIPLICATION + 1, "/"),
+    TokenType.PERCENT: (_BP_MULTIPLICATION, _BP_MULTIPLICATION + 1, "%"),
+}
+
+# Postfix tokens handled in the LED portion of the Pratt loop
+_POSTFIX_TOKENS: set[TokenType] = {TokenType.DOT, TokenType.LBRACKET, TokenType.LPAREN}
+
+# Non-chaining operators: only one application allowed at this precedence
+_NON_CHAINING: set[int] = {_BP_COMPARISON, _BP_MEMBERSHIP}
 
 
 class ExpressionParser:
-    """Recursive-descent parser for Cloud Workflows expressions."""
+    """Pratt (top-down operator precedence) parser for Cloud Workflows expressions.
 
-    def __init__(self, tokens: list[Token]):
+    Produces a lightweight AST of dataclass nodes.  Supports error recovery:
+    when *recover=True*, the parser emits :class:`ErrorNode` placeholders
+    instead of raising on every fault, attempting to continue and report
+    multiple errors in a single pass.
+    """
+
+    def __init__(self, tokens: list[Token], *, recover: bool = False):
         self.tokens = tokens
         self.pos = 0
+        self.recover = recover
+        self.errors: list[ParseError] = []
+
+    # -- token helpers -------------------------------------------------------
 
     def peek(self) -> Token:
+        if self.pos >= len(self.tokens):
+            return self.tokens[-1]  # always return EOF
         return self.tokens[self.pos]
 
     def advance(self) -> Token:
         tok = self.tokens[self.pos]
-        self.pos += 1
+        if self.pos < len(self.tokens) - 1:  # don't advance past EOF
+            self.pos += 1
         return tok
 
     def expect(self, tt: TokenType) -> Token:
         tok = self.peek()
         if tok.type != tt:
-            raise ParseError(
+            err = ParseError(
                 f"Expected {tt.name} but got {tok.type.name} ({tok.value!r}) "
                 f"at position {tok.pos}",
                 tok.pos,
             )
+            if self.recover:
+                self.errors.append(err)
+                return self._synchronize(tt)
+            raise err
         return self.advance()
 
     def at(self, *types: TokenType) -> bool:
         return self.peek().type in types
 
-    # -- Grammar rules -------------------------------------------------------
+    # -- error recovery helpers -----------------------------------------------
 
-    def parse(self) -> None:
+    _SYNC_TOKENS: set[TokenType] = {
+        TokenType.RPAREN,
+        TokenType.RBRACKET,
+        TokenType.RBRACE,
+        TokenType.COMMA,
+        TokenType.COLON,
+        TokenType.EOF,
+    }
+
+    def _synchronize(self, expected: TokenType) -> Token:
+        """Skip tokens until *expected* or a synchronization token is found."""
+        while not self.at(expected, TokenType.EOF):
+            if self.peek().type in self._SYNC_TOKENS:
+                break
+            self.advance()
+        if self.at(expected):
+            return self.advance()
+        return Token(expected, "", self.peek().pos)
+
+    def _error_node(self, err: ParseError) -> ErrorNode:
+        """Record an error and return a placeholder AST node."""
+        self.errors.append(err)
+        return ErrorNode(message=str(err), pos=err.pos)
+
+    # -- top-level entry point -----------------------------------------------
+
+    def parse(self) -> Node:
         """Parse the full expression and ensure we consume everything."""
-        self.expression()
+        node = self.parse_expression(0)
         if self.peek().type != TokenType.EOF:
             tok = self.peek()
-            raise ParseError(
+            err = ParseError(
                 f"Unexpected token {tok.type.name} ({tok.value!r}) "
                 f"at position {tok.pos} -- expected end of expression",
                 tok.pos,
             )
-
-    def expression(self) -> None:
-        self.or_expr()
-
-    def or_expr(self) -> None:
-        self.and_expr()
-        while self.at(TokenType.OR):
-            self.advance()
-            self.and_expr()
-
-    def and_expr(self) -> None:
-        self.membership()
-        while self.at(TokenType.AND):
-            self.advance()
-            self.membership()
-
-    def membership(self) -> None:
-        self.comparison()
-        if self.at(TokenType.IN):
-            self.advance()
-            self.comparison()
-
-    def comparison(self) -> None:
-        self.addition()
-        if self.at(
-            TokenType.EQ,
-            TokenType.NEQ,
-            TokenType.LT,
-            TokenType.LTE,
-            TokenType.GT,
-            TokenType.GTE,
-        ):
-            self.advance()
-            self.addition()
-
-    def addition(self) -> None:
-        self.multiplication()
-        while self.at(TokenType.PLUS, TokenType.MINUS):
-            self.advance()
-            self.multiplication()
-
-    def multiplication(self) -> None:
-        self.unary()
-        while self.at(TokenType.STAR, TokenType.SLASH, TokenType.PERCENT):
-            self.advance()
-            self.unary()
-
-    def unary(self) -> None:
-        if self.at(TokenType.MINUS):
-            self.advance()
-            self.unary()
-        else:
-            self.primary_postfix()
-
-    def primary_postfix(self) -> None:
-        self.primary()
-        while True:
-            if self.at(TokenType.DOT):
-                self.advance()
-                self.expect(TokenType.IDENT)
-            elif self.at(TokenType.LBRACKET):
-                self.advance()
-                self.expression()
-                self.expect(TokenType.RBRACKET)
-            elif self.at(TokenType.LPAREN):
-                self.advance()
-                if not self.at(TokenType.RPAREN):
-                    self.arguments()
-                self.expect(TokenType.RPAREN)
+            if self.recover:
+                self.errors.append(err)
+                while not self.at(TokenType.EOF):
+                    self.advance()
             else:
+                raise err
+        return node
+
+    # -- Pratt core -----------------------------------------------------------
+
+    def parse_expression(self, min_bp: int) -> Node:
+        """Core Pratt loop: NUD then LED while binding power allows.
+
+        Postfix operators (``.``, ``[``, ``(``) are integrated into the loop
+        at ``_BP_POSTFIX`` so that expressions like ``f(a + b)`` correctly
+        parse ``a + b`` as the full argument.
+
+        Non-chaining operators (comparison, membership) are allowed at most
+        once per call: after one fires, its precedence is recorded in
+        *used_non_chain* to prevent a second match at the same level,
+        without blocking lower-precedence operators like ``and`` / ``or``.
+        """
+        lhs = self._nud()
+
+        # Track which non-chaining BP levels have already been used in THIS
+        # invocation, so we can reject a second operator at the same level.
+        used_non_chain: set[int] = set()
+
+        while True:
+            tok = self.peek()
+
+            # --- Postfix operators (highest precedence) ---
+            if tok.type in _POSTFIX_TOKENS:
+                if _BP_POSTFIX < min_bp:
+                    break
+                lhs = self._led_postfix(lhs)
+                continue
+
+            # --- Infix binary operators ---
+            info = _INFIX_BP.get(tok.type)
+            if info is None:
+                break
+            left_bp, right_bp, op_str = info
+            if left_bp < min_bp:
                 break
 
-    def primary(self) -> None:
+            # Non-chaining: reject a second operator at the same level
+            if left_bp in _NON_CHAINING:
+                if left_bp in used_non_chain:
+                    break
+                used_non_chain.add(left_bp)
+
+            op_tok = self.advance()
+            rhs = self.parse_expression(right_bp)
+            lhs = BinaryOp(op=op_str, left=lhs, right=rhs, pos=op_tok.pos)
+
+        return lhs
+
+    # -- NUD (null denotation / prefix) ---------------------------------------
+
+    def _nud(self) -> Node:
+        """Parse a prefix token (literal, identifier, unary op, grouping)."""
         tok = self.peek()
 
+        # Unary minus — parse operand at unary precedence
+        if tok.type == TokenType.MINUS:
+            op_tok = self.advance()
+            operand = self.parse_expression(_BP_UNARY)
+            return UnaryOp(op="-", operand=operand, pos=op_tok.pos)
+
         # Numeric literals
-        if tok.type in (TokenType.INTEGER, TokenType.DOUBLE):
+        if tok.type == TokenType.INTEGER:
             self.advance()
-            return
+            return NumberLiteral(value=tok.value, pos=tok.pos)
+        if tok.type == TokenType.DOUBLE:
+            self.advance()
+            return NumberLiteral(value=tok.value, pos=tok.pos)
 
         # String literal
         if tok.type == TokenType.STRING:
             self.advance()
-            return
+            return StringLiteral(value=tok.value, pos=tok.pos)
 
         # Boolean / null
-        if tok.type in (TokenType.TRUE, TokenType.FALSE, TokenType.NULL):
+        if tok.type == TokenType.TRUE:
             self.advance()
-            return
+            return BoolLiteral(value=True, pos=tok.pos)
+        if tok.type == TokenType.FALSE:
+            self.advance()
+            return BoolLiteral(value=False, pos=tok.pos)
+        if tok.type == TokenType.NULL:
+            self.advance()
+            return NullLiteral(pos=tok.pos)
 
-        # Identifier (variable name or function name -- call is handled in postfix)
+        # Identifier
         if tok.type == TokenType.IDENT:
             self.advance()
-            return
+            return Identifier(name=tok.value, pos=tok.pos)
 
-        # `not` keyword used as function: not(...)
+        # ``not`` keyword used as identifier-like (function call via postfix)
         if tok.type == TokenType.NOT:
             self.advance()
-            return
+            return Identifier(name="not", pos=tok.pos)
 
         # Parenthesized expression
         if tok.type == TokenType.LPAREN:
             self.advance()
-            self.expression()
+            node = self.parse_expression(0)
             self.expect(TokenType.RPAREN)
-            return
+            return node
 
         # List literal
         if tok.type == TokenType.LBRACKET:
-            self.advance()
-            if not self.at(TokenType.RBRACKET):
-                self.list_items()
-            self.expect(TokenType.RBRACKET)
-            return
+            return self._parse_list()
 
         # Map literal
         if tok.type == TokenType.LBRACE:
-            self.advance()
-            if not self.at(TokenType.RBRACE):
-                self.map_items()
-            self.expect(TokenType.RBRACE)
-            return
+            return self._parse_map()
 
-        raise ParseError(
+        err = ParseError(
             f"Unexpected token {tok.type.name} ({tok.value!r}) at position {tok.pos}",
             tok.pos,
         )
+        if self.recover:
+            self.advance()
+            return self._error_node(err)
+        raise err
 
-    def list_items(self) -> None:
-        self.expression()
+    # -- LED for postfix operators -------------------------------------------
+
+    def _led_postfix(self, lhs: Node) -> Node:
+        """Handle a single postfix operator: ``.field``, ``[idx]``, ``(args)``."""
+        if self.at(TokenType.DOT):
+            dot = self.advance()
+            name_tok = self.expect(TokenType.IDENT)
+            return MemberAccess(object=lhs, field=name_tok.value, pos=dot.pos)
+        if self.at(TokenType.LBRACKET):
+            bracket = self.advance()
+            index = self.parse_expression(0)
+            self.expect(TokenType.RBRACKET)
+            return IndexAccess(object=lhs, index=index, pos=bracket.pos)
+        if self.at(TokenType.LPAREN):
+            paren = self.advance()
+            args: list[Node] = []
+            if not self.at(TokenType.RPAREN):
+                args = self._parse_arguments()
+            self.expect(TokenType.RPAREN)
+            return FunctionCall(function=lhs, args=args, pos=paren.pos)
+        return lhs  # unreachable
+
+    # -- Compound literals and arguments -------------------------------------
+
+    def _parse_list(self) -> ListLiteral:
+        tok = self.advance()  # consume [
+        elements: list[Node] = []
+        if not self.at(TokenType.RBRACKET):
+            elements.append(self.parse_expression(0))
+            while self.at(TokenType.COMMA):
+                self.advance()
+                if self.at(TokenType.RBRACKET):
+                    break  # trailing comma
+                elements.append(self.parse_expression(0))
+        self.expect(TokenType.RBRACKET)
+        return ListLiteral(elements=elements, pos=tok.pos)
+
+    def _parse_map(self) -> MapLiteral:
+        tok = self.advance()  # consume {
+        entries: list[MapEntry] = []
+        if not self.at(TokenType.RBRACE):
+            entries.append(self._parse_map_entry())
+            while self.at(TokenType.COMMA):
+                self.advance()
+                if self.at(TokenType.RBRACE):
+                    break  # trailing comma
+                entries.append(self._parse_map_entry())
+        self.expect(TokenType.RBRACE)
+        return MapLiteral(entries=entries, pos=tok.pos)
+
+    def _parse_map_entry(self) -> MapEntry:
+        key = self.parse_expression(0)
+        colon = self.expect(TokenType.COLON)
+        value = self.parse_expression(0)
+        return MapEntry(key=key, value=value, pos=colon.pos)
+
+    def _parse_arguments(self) -> list[Node]:
+        args: list[Node] = [self.parse_expression(0)]
         while self.at(TokenType.COMMA):
             self.advance()
-            # Allow trailing comma
-            if self.at(TokenType.RBRACKET):
-                break
-            self.expression()
-
-    def map_items(self) -> None:
-        self.map_entry()
-        while self.at(TokenType.COMMA):
-            self.advance()
-            # Allow trailing comma
-            if self.at(TokenType.RBRACE):
-                break
-            self.map_entry()
-
-    def map_entry(self) -> None:
-        self.expression()
-        self.expect(TokenType.COLON)
-        self.expression()
-
-    def arguments(self) -> None:
-        self.expression()
-        while self.at(TokenType.COMMA):
-            self.advance()
-            # Allow trailing comma
             if self.at(TokenType.RPAREN):
-                break
-            self.expression()
+                break  # trailing comma
+            args.append(self.parse_expression(0))
+        return args
 
 
 # =============================================================================
@@ -518,15 +811,39 @@ class ExpressionError:
     pos: Optional[int] = None
 
 
+def parse_expression_ast(expr_body: str) -> Node:
+    """Parse an expression body into an AST.
+
+    Raises LexError or ParseError on invalid input.
+    """
+    tokens = tokenize(expr_body)
+    parser = ExpressionParser(tokens)
+    return parser.parse()
+
+
+def parse_expression_recover(expr_body: str) -> tuple[Node, list[ExpressionError]]:
+    """Parse an expression with error recovery enabled.
+
+    Returns ``(ast, errors)`` where *errors* may be non-empty even when the
+    AST is returned (it will contain :class:`ErrorNode` placeholders).
+    """
+    tokens = tokenize(expr_body)
+    parser = ExpressionParser(tokens, recover=True)
+    node = parser.parse()
+    errors = [
+        ExpressionError(expression=expr_body, message=str(e), pos=e.pos)
+        for e in parser.errors
+    ]
+    return node, errors
+
+
 def validate_expression(expr_body: str) -> Optional[ExpressionError]:
     """Validate a single expression body (the content inside ${...}).
 
     Returns None if valid, or an ExpressionError if invalid.
     """
     try:
-        tokens = tokenize(expr_body)
-        parser = ExpressionParser(tokens)
-        parser.parse()
+        parse_expression_ast(expr_body)
         return None
     except (LexError, ParseError) as e:
         return ExpressionError(
@@ -568,12 +885,53 @@ def validate_all_expressions(value: Any) -> list[ExpressionError]:
     return errors
 
 
+# =============================================================================
+# AST visitor infrastructure
+# =============================================================================
+
+
+def walk(node: Node) -> list[Node]:
+    """Yield all nodes in the AST in depth-first pre-order."""
+    result: list[Node] = [node]
+    if isinstance(node, UnaryOp):
+        result.extend(walk(node.operand))
+    elif isinstance(node, BinaryOp):
+        result.extend(walk(node.left))
+        result.extend(walk(node.right))
+    elif isinstance(node, MemberAccess):
+        result.extend(walk(node.object))
+    elif isinstance(node, IndexAccess):
+        result.extend(walk(node.object))
+        result.extend(walk(node.index))
+    elif isinstance(node, FunctionCall):
+        result.extend(walk(node.function))
+        for arg in node.args:
+            result.extend(walk(arg))
+    elif isinstance(node, ListLiteral):
+        for elem in node.elements:
+            result.extend(walk(elem))
+    elif isinstance(node, MapLiteral):
+        for entry in node.entries:
+            result.extend(walk(entry))
+    elif isinstance(node, MapEntry):
+        result.extend(walk(node.key))
+        result.extend(walk(node.value))
+    elif isinstance(node, ErrorNode):
+        for child in node.children:
+            result.extend(walk(child))
+    return result
+
+
+# Expression-context built-in functions (not variables)
+_BUILTINS: set[str] = {"len", "keys", "int", "double", "string", "bool", "type", "not"}
+
+
 def extract_variable_references(expr_body: str) -> list[str]:
     """Extract top-level variable names referenced in an expression.
 
-    This is a best-effort extraction for use by variable tracking.
-    Returns a list of identifier names (the root variable name before
-    any dot/bracket access).
+    Uses AST traversal for accuracy.  Built-in function names are excluded;
+    member-access fields (the ``y`` in ``x.y``) are excluded; the root
+    object in a chain (``x`` in ``x.y.z[0]``) is included.
 
     For example:
         "x + y.field" -> ["x", "y"]
@@ -582,23 +940,49 @@ def extract_variable_references(expr_body: str) -> list[str]:
         '"literal"' -> []
     """
     try:
-        tokens = tokenize(expr_body)
-    except LexError:
+        ast = parse_expression_ast(expr_body)
+    except (LexError, ParseError):
         return []
 
     refs: list[str] = []
-    # Expression-context built-in functions (not variables)
-    builtins = {"len", "keys", "int", "double", "string", "bool", "type", "not"}
-
-    for i, tok in enumerate(tokens):
-        if tok.type == TokenType.IDENT:
-            # Check if it's a function call (followed by '(')
-            if i + 1 < len(tokens) and tokens[i + 1].type == TokenType.LPAREN:
-                if tok.value in builtins:
-                    continue  # skip built-in function names
-            # Check if it's preceded by a dot (member access, not a root variable)
-            if i > 0 and tokens[i - 1].type == TokenType.DOT:
-                continue
-            refs.append(tok.value)
-
+    _collect_refs(ast, None, refs)
     return refs
+
+
+def _collect_refs(node: Node, parent: Node | None, refs: list[str]) -> None:
+    """Recursively collect root-level variable references from the AST."""
+    if isinstance(node, Identifier):
+        refs.append(node.name)
+    elif isinstance(node, UnaryOp):
+        _collect_refs(node.operand, node, refs)
+    elif isinstance(node, BinaryOp):
+        _collect_refs(node.left, node, refs)
+        _collect_refs(node.right, node, refs)
+    elif isinstance(node, MemberAccess):
+        # Only collect from the object side (the root of the chain)
+        _collect_refs(node.object, node, refs)
+    elif isinstance(node, IndexAccess):
+        _collect_refs(node.object, node, refs)
+        _collect_refs(node.index, node, refs)
+    elif isinstance(node, FunctionCall):
+        # If the function is a builtin name, skip collecting it as a variable
+        # but still collect from the arguments.
+        if isinstance(node.function, Identifier) and node.function.name in _BUILTINS:
+            for arg in node.args:
+                _collect_refs(arg, node, refs)
+        else:
+            _collect_refs(node.function, node, refs)
+            for arg in node.args:
+                _collect_refs(arg, node, refs)
+    elif isinstance(node, ListLiteral):
+        for elem in node.elements:
+            _collect_refs(elem, node, refs)
+    elif isinstance(node, MapLiteral):
+        for entry in node.entries:
+            _collect_refs(entry, node, refs)
+    elif isinstance(node, MapEntry):
+        _collect_refs(node.key, node, refs)
+        _collect_refs(node.value, node, refs)
+    elif isinstance(node, ErrorNode):
+        for child in node.children:
+            _collect_refs(child, node, refs)

@@ -1,0 +1,108 @@
+# AST snapshot fixtures for expression parser regression testing.
+# Each key is a human-readable label; each entry contains:
+#   expr:     the expression body (content inside ${...})
+#   expected: the repr() of the AST root node produced by parse_expression_ast()
+
+simple_integer:
+  expr: "42"
+  expected: "NumberLiteral(value='42', pos=0)"
+
+simple_double:
+  expr: "3.14"
+  expected: "NumberLiteral(value='3.14', pos=0)"
+
+simple_string:
+  expr: '"hello"'
+  expected: "StringLiteral(value='hello', pos=0)"
+
+simple_true:
+  expr: "true"
+  expected: "BoolLiteral(value=True, pos=0)"
+
+simple_false:
+  expr: "false"
+  expected: "BoolLiteral(value=False, pos=0)"
+
+simple_null:
+  expr: "null"
+  expected: "NullLiteral(pos=0)"
+
+simple_identifier:
+  expr: "my_var"
+  expected: "Identifier(name='my_var', pos=0)"
+
+unary_minus:
+  expr: "-x"
+  expected: "UnaryOp(op='-', operand=Identifier(name='x', pos=1), pos=0)"
+
+binary_addition:
+  expr: "x + y"
+  expected: "BinaryOp(op='+', left=Identifier(name='x', pos=0), right=Identifier(name='y', pos=4), pos=2)"
+
+binary_precedence:
+  expr: "a + b * c"
+  expected: "BinaryOp(op='+', left=Identifier(name='a', pos=0), right=BinaryOp(op='*', left=Identifier(name='b', pos=4), right=Identifier(name='c', pos=8), pos=6), pos=2)"
+
+parenthesized:
+  expr: "(a + b) * c"
+  expected: "BinaryOp(op='*', left=BinaryOp(op='+', left=Identifier(name='a', pos=1), right=Identifier(name='b', pos=5), pos=3), right=Identifier(name='c', pos=10), pos=8)"
+
+comparison:
+  expr: "x > 0"
+  expected: "BinaryOp(op='>', left=Identifier(name='x', pos=0), right=NumberLiteral(value='0', pos=4), pos=2)"
+
+logical_and:
+  expr: "a and b"
+  expected: "BinaryOp(op='and', left=Identifier(name='a', pos=0), right=Identifier(name='b', pos=6), pos=2)"
+
+logical_or:
+  expr: "a or b"
+  expected: "BinaryOp(op='or', left=Identifier(name='a', pos=0), right=Identifier(name='b', pos=5), pos=2)"
+
+membership_in:
+  expr: '"key" in my_map'
+  expected: "BinaryOp(op='in', left=StringLiteral(value='key', pos=0), right=Identifier(name='my_map', pos=9), pos=6)"
+
+member_access:
+  expr: "config.key1"
+  expected: "MemberAccess(object=Identifier(name='config', pos=0), field='key1', pos=6)"
+
+index_access:
+  expr: "items[0]"
+  expected: "IndexAccess(object=Identifier(name='items', pos=0), index=NumberLiteral(value='0', pos=6), pos=5)"
+
+function_call_simple:
+  expr: "len(items)"
+  expected: "FunctionCall(function=Identifier(name='len', pos=0), args=[Identifier(name='items', pos=4)], pos=3)"
+
+function_call_multi_arg:
+  expr: "string(len(items) + 1)"
+  expected: "FunctionCall(function=Identifier(name='string', pos=0), args=[BinaryOp(op='+', left=FunctionCall(function=Identifier(name='len', pos=7), args=[Identifier(name='items', pos=11)], pos=10), right=NumberLiteral(value='1', pos=20), pos=18)], pos=6)"
+
+not_function:
+  expr: "not(x)"
+  expected: "FunctionCall(function=Identifier(name='not', pos=0), args=[Identifier(name='x', pos=4)], pos=3)"
+
+list_literal:
+  expr: "[1, 2, 3]"
+  expected: "ListLiteral(elements=[NumberLiteral(value='1', pos=1), NumberLiteral(value='2', pos=4), NumberLiteral(value='3', pos=7)], pos=0)"
+
+empty_list:
+  expr: "[]"
+  expected: "ListLiteral(elements=[], pos=0)"
+
+map_literal:
+  expr: '{"a": 1}'
+  expected: "MapLiteral(entries=[MapEntry(key=StringLiteral(value='a', pos=1), value=NumberLiteral(value='1', pos=6), pos=4)], pos=0)"
+
+empty_map:
+  expr: "{}"
+  expected: "MapLiteral(entries=[], pos=0)"
+
+chained_access:
+  expr: "response.body.data[0].name"
+  expected: "MemberAccess(object=IndexAccess(object=MemberAccess(object=MemberAccess(object=Identifier(name='response', pos=0), field='body', pos=8), field='data', pos=13), index=NumberLiteral(value='0', pos=19), pos=18), field='name', pos=21)"
+
+complex_expression:
+  expr: "x > 0 and len(items) != 0"
+  expected: "BinaryOp(op='and', left=BinaryOp(op='>', left=Identifier(name='x', pos=0), right=NumberLiteral(value='0', pos=4), pos=2), right=BinaryOp(op='!=', left=FunctionCall(function=Identifier(name='len', pos=10), args=[Identifier(name='items', pos=14)], pos=13), right=NumberLiteral(value='0', pos=24), pos=21), pos=6)"
