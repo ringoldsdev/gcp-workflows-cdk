@@ -1,6 +1,6 @@
 # cloud-workflows-generator
 
-A Python CDK for Google Cloud Workflows. Define workflows with a callback-based builder API, validate them against the full GCP Workflows spec, and emit YAML files.
+A Python CDK for Google Cloud Workflows. Define workflows with a class-based imperative API, validate them against the full GCP Workflows spec, and emit YAML files.
 
 ```bash
 pip install -e .
@@ -9,14 +9,14 @@ pip install -e .
 ## Quick Start
 
 ```python
-from cloud_workflows import Workflow, build, expr
+from cloud_workflows import Steps, Assign, Call, Return, build, expr
 
-build({
-    "workflow.yaml": Workflow()
-        .assign("init", x=10, y=20)
-        .call("log", func="sys.log", args={"text": expr("x + y")})
-        .returns("done", value=expr("x + y")),
-})
+s = Steps()
+s("init", Assign(x=10, y=20))
+s("log", Call("sys.log", args={"text": expr("x + y")}))
+s("done", Return(expr("x + y")))
+
+build({"workflow.yaml": s})
 ```
 
 Output (`workflow.yaml`):
@@ -34,35 +34,33 @@ Output (`workflow.yaml`):
     return: ${x + y}
 ```
 
-## Core Patterns
-
-Every step type supports two forms: **keyword arguments** for simple cases and a **callback** for full control. The callback receives a sub-builder and returns it via chaining.
+## Step Types
 
 ### Assign
 
 ```python
 # kwargs — each key-value pair becomes an assignment
-s.assign("init", x=10, greeting=expr('"Hello, " + name'))
+s("init", Assign(x=10, greeting=expr('"Hello, " + name')))
 
-# callback — .set() for individual items, .next() for jump target
-s.assign("init", lambda a: a
-    .set("config", {"retries": 3, "timeout": 30})
-    .set("items", [1, 2, 3])
-    .next("process")
-)
+# dict for complex keys (dotted paths, bracket syntax)
+s("init", Assign({"config.http.timeout": 30, 'map["key"]': "value"}))
+
+# combine dict and kwargs
+s("init", Assign({"a.b.c": 1}, x=10))
+
+# with jump target
+s("init", Assign(x=10, next="process"))
 ```
 
 #### Dot-path unnesting
 
-Dot-separated keys in `.set()` (and kwargs) are automatically unnested into nested dicts:
+Dot-separated keys are automatically expanded into nested dicts:
 
 ```python
-# These are equivalent:
-s.assign("init", lambda a: a.set("config.http.timeout", 30).set("config.http.retries", 3))
-s.assign("init", **{"config.http.timeout": 30, "config.http.retries": 3})
+s("init", Assign({"config.http.timeout": 30, "config.http.retries": 3}))
 ```
 
-Both produce:
+Produces:
 
 ```yaml
 - init:
@@ -78,183 +76,171 @@ Both produce:
 ### Call
 
 ```python
-# kwargs
-s.call("fetch", func="http.get", args={"url": "https://example.com"}, result="response")
-
-# callback
-s.call("fetch", lambda c: c
-    .func("http.get")
-    .args(url="https://example.com", headers={"Accept": "application/json"})
-    .result("response")
-    .next("process")
-)
+s("fetch", Call("http.get", args={"url": "https://example.com"}, result="response"))
+s("log", Call("sys.log", args={"text": expr("response.body")}, next="done"))
 ```
 
 ### Return / Raise
 
 ```python
-s.returns("done", value=expr("response.body"))
-s.raises("fail", value={"code": 404, "message": "Not found"})
-
-# callback
-s.returns("done", lambda r: r.value(expr("x + y")))
-s.raises("fail", lambda r: r.value(expr("e")))
+s("done", Return(expr("response.body")))
+s("fail", Raise({"code": 404, "message": "Not found"}))
 ```
 
 ### Switch
 
 ```python
-# callback — each .condition() adds a branch
-s.switch("check", lambda sw: sw
-    .condition(expr("x > 0"), next="positive")
-    .condition(expr("x == 0"), returns="zero")
-    .condition(True, next="negative")  # default case
-)
+from cloud_workflows import Switch, Condition
+
+s("check", Switch(
+    conditions=[
+        Condition(expr("x > 0"), next="positive"),
+        Condition(expr("x == 0"), return_="zero"),
+        Condition(True, next="negative"),  # default case
+    ],
+))
 ```
 
 ### For Loop
 
 ```python
-# kwargs — value is always required, provide either in_ or range_
-s.loop("loop", value="item", in_=expr("items"), steps=inner_steps)
-s.loop("count", value="i", range_=[1, 10], steps=inner_steps)
+from cloud_workflows import For
 
-# callback
-s.loop("loop", lambda f: f
-    .value("item")
-    .index("idx")
-    .items(["a", "b", "c"])
-    .steps(lambda s: s
-        .call("log", func="sys.log", args={"text": expr("item")})
-    ),
-)
+inner = Steps()
+inner("log", Call("sys.log", args={"text": expr("item")}))
+
+s("loop", For(value="item", in_=["a", "b", "c"], steps=inner))
+s("count", For(value="i", range=[1, 10], steps=inner))
+s("indexed", For(value="item", in_=items, index="idx", steps=inner))
 ```
 
 ### Parallel
 
 ```python
-# callback — .branch() takes a name and a StepBuilder (or lambda)
-s.parallel("work", lambda p: p
-    .branch("fetch_users", lambda s: s
-        .call("get", func="http.get", args={"url": "https://example.com/users"}, result="users")
-    )
-    .branch("fetch_orders", lambda s: s
-        .call("get", func="http.get", args={"url": "https://example.com/orders"}, result="orders")
-    )
-    .shared(["users", "orders"])
-    .concurrency_limit(2)
-)
+from cloud_workflows import Parallel
+
+b1 = Steps()
+b1("get_users", Call("http.get", args={"url": "https://example.com/users"}, result="users"))
+
+b2 = Steps()
+b2("get_orders", Call("http.get", args={"url": "https://example.com/orders"}, result="orders"))
+
+s("work", Parallel(
+    branches={"fetch_users": b1, "fetch_orders": b2},
+    shared=["users", "orders"],
+    concurrency_limit=2,
+))
 ```
 
 ### Try / Except / Retry
 
 ```python
-# callback — .body() wraps the operation, .retry() and .exception() add error handling
-s.do_try("safe_call", lambda t: t
-    .body(lambda s: s
-        .call("fetch", func="http.get", args={"url": "https://example.com"}, result="resp")
-    )
-    .retry(
-        predicate=expr("http.default_retry_predicate"),
-        max_retries=3,
-        backoff={"initial_delay": 1, "max_delay": 60, "multiplier": 2},
-    )
-    .exception(error="e", steps=lambda s: s
-        .call("log", func="sys.log", args={"text": expr("e.message")})
-        .raises("rethrow", value=expr("e"))
-    )
-)
+from cloud_workflows import Try
+
+body = Steps()
+body("fetch", Call("http.get", args={"url": "https://example.com"}, result="resp"))
+
+except_steps = Steps()
+except_steps("log", Call("sys.log", args={"text": expr("e.message")}))
+except_steps("rethrow", Raise(expr("e")))
+
+s("safe_call", Try(
+    steps=body,
+    retry={
+        "predicate": expr("http.default_retry_predicate"),
+        "max_retries": 3,
+        "backoff": {"initial_delay": 1, "max_delay": 60, "multiplier": 2},
+    },
+    except_={"as": "e", "steps": except_steps},
+))
 ```
 
 ### Nested Steps
 
 ```python
-s.nested_steps("group", lambda ns: ns
-    .body(lambda s: s
-        .call("step_a", func="sys.log", args={"text": "a"})
-        .call("step_b", func="sys.log", args={"text": "b"})
-    )
-    .next("done")
-)
+from cloud_workflows import NestedSteps
+
+inner = Steps()
+inner("step_a", Call("sys.log", args={"text": "a"}))
+inner("step_b", Call("sys.log", args={"text": "b"}))
+
+s("group", NestedSteps(steps=inner, next="done"))
 ```
 
 ## Composition
 
-### `.apply()` — Merge Steps
+### Merging Steps
 
-`.apply()` copies steps from another builder into the current one. Use it to compose reusable fragments.
+Call a `Steps` container with another to merge its steps:
 
 ```python
-def logging_middleware(message):
-    return StepBuilder().call("log", func="sys.log", args={"text": message})
+def logging_steps(message):
+    s = Steps()
+    s("log", Call("sys.log", args={"text": message}))
+    return s
 
 def error_handler():
-    return StepBuilder().do_try("safe", lambda t: t
-        .body(lambda s: s.call("op", func="http.get", args={"url": "https://example.com"}, result="r"))
-        .exception(error="e", steps=lambda s: s.raises("fail", value=expr("e")))
-    )
+    body = Steps()
+    body("op", Call("http.get", args={"url": "https://example.com"}, result="r"))
+    except_steps = Steps()
+    except_steps("fail", Raise(expr("e")))
+    s = Steps()
+    s("safe", Try(steps=body, except_={"as": "e", "steps": except_steps}))
+    return s
 
-workflow = (
-    Workflow()
-    .assign("init", status="starting")
-    .apply(logging_middleware("Workflow started"))
-    .apply(error_handler())
-    .returns("done", value=expr("r.body"))
-)()
-```
-
-### Sub-builder `.apply()` — Merge Into Step Internals
-
-Each sub-builder also supports `.apply()` for composing within a single step:
-
-```python
-common_headers = Assign().set("content_type", "application/json").set("accept", "application/json")
-
-s.assign("init", lambda a: a
-    .set("url", "https://example.com")
-    .apply(common_headers)
-)
+main = Steps()
+main("init", Assign(status="starting"))
+main(logging_steps("Workflow started"))
+main(error_handler())
+main("done", Return(expr("r.body")))
 ```
 
 ### Factory Functions
 
 ```python
-from cloud_workflows import StepBuilder, Workflow, build, expr
+from cloud_workflows import Steps, Assign, Call, Return, build, expr
 
-def api_workflow(name, url):
-    return (
-        StepBuilder()
-        .assign("init", endpoint=url)
-        .call("fetch", func="http.get", args={"url": expr("endpoint")}, result="response")
-        .returns("done", value=expr("response.body"))
-    )
+def api_workflow(url):
+    s = Steps()
+    s("init", Assign(endpoint=url))
+    s("fetch", Call("http.get", args={"url": expr("endpoint")}, result="response"))
+    s("done", Return(expr("response.body")))
+    return s
 
 build({
-    "users.yaml": Workflow().apply(api_workflow("users", "https://example.com/users")),
-    "orders.yaml": Workflow().apply(api_workflow("orders", "https://example.com/orders")),
+    "users.yaml": api_workflow("https://example.com/users"),
+    "orders.yaml": api_workflow("https://example.com/orders"),
 }, output_dir="output/")
 ```
 
 ## Subworkflows
 
-When a workflow needs helper functions or accepts runtime parameters, use `Subworkflow` with a dict:
+For workflows with multiple subworkflows or runtime parameters, use `Steps(params=[...])` and pass a dict to `build()`:
 
 ```python
-from cloud_workflows import Workflow, Subworkflow, build, expr
+from cloud_workflows import Steps, Assign, Call, Return, build, expr
 
-main = Subworkflow().call("greet", func="make_greeting", args={"person": "Alice"}, result="msg").returns("done", value=expr("msg"))
-helper = Subworkflow(params=["person"]).assign("build", greeting=expr('"Hello, " + person')).returns("done", value=expr("greeting"))
+main = Steps()
+main("greet", Call("make_greeting", args={"person": "Alice"}, result="msg"))
+main("done", Return(expr("msg")))
 
-workflow = Workflow({"main": main, "helper": helper})()
+helper = Steps(params=["person"])
+helper("build", Assign(greeting=expr('"Hello, " + person')))
+helper("done", Return(expr("greeting")))
+
+build({"workflow.yaml": {"main": main, "helper": helper}})
 ```
 
-For simple workflows (no subworkflows, no params), chain steps directly on `Workflow`:
+For simple workflows (no subworkflows, no params), pass the `Steps` instance directly:
 
 ```python
-workflow = Workflow().assign("init", x=10).returns("done", value=expr("x"))()
+s = Steps()
+s("init", Assign(x=10))
+s("done", Return(expr("x")))
+build({"workflow.yaml": s})
 ```
 
-Calling the `Workflow` instance (or `.build()`) returns a `SimpleWorkflow` (flat list) when there is a single "main" with no params, otherwise a `SubworkflowsWorkflow` (dict of named workflows). The standalone `build()` function auto-finalizes unfinalized `Workflow` objects, so you can pass them directly.
+`build()` auto-finalizes `Steps` into `SimpleWorkflow` (flat list) when there is a single workflow with no params, or `SubworkflowsWorkflow` (dict of named workflows) otherwise.
 
 ## Validation
 
@@ -264,7 +250,7 @@ Every workflow can be validated against the full GCP Workflows spec: structural 
 from cloud_workflows import analyze_workflow, analyze_yaml
 
 # Validate a builder-constructed workflow
-result = analyze_workflow(workflow)
+result = analyze_workflow(s._finalize())
 print(result.is_valid)          # True / False
 print(result.errors)            # list of errors (expression + variable)
 print(result.warnings)          # list of warnings (e.g. conditionally-defined variables)
@@ -329,15 +315,6 @@ Pydantic field names use trailing underscores for Python reserved words. Seriali
 | `except_` | `except` |
 | `try_` | `try` |
 
-> **Note:** The builder API provides friendlier names so you don't need trailing underscores in most code. See the table below. The original underscore names continue to work.
->
-> | Preferred method | Original | Sub-builder class | Original |
-> |---|---|---|---|
-> | `.returns(name, ...)` | `.return_()`, `.do_return()` | `Returns` | `Return_`, `DoReturn` |
-> | `.raises(name, ...)` | `.raise_()`, `.do_raise()` | `Raises` | `Raise_`, `DoRaise` |
-> | `.loop(name, ...)` | `.for_()` | `Loop` | `For` |
-> | `.do_try(name, ...)` | `.try_()` | `DoTry` | `Try_` |
-
 ### Model Construction Examples
 
 ```python
@@ -378,4 +355,4 @@ TryStep(
 
 Full API documentation, expression parser internals, and variable analysis behavior are in [REFERENCE.md](./REFERENCE.md).
 
-For the builder pipeline, StepBase dict-state architecture, and how Pydantic validation fits into the build process, see [ARCHITECTURE.md](./ARCHITECTURE.md).
+For the builder pipeline and validation pipeline architecture, see [ARCHITECTURE.md](./ARCHITECTURE.md).

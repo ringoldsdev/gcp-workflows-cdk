@@ -22,6 +22,7 @@ Comprehensive technical reference for `cloud-workflows-generator`. For usage exa
 - Python >= 3.14
 - pydantic >= 2.0
 - pyyaml >= 6.0
+- jsonpath-ng >= 1.6
 - pytest >= 8.0 (dev only)
 
 ## Installation
@@ -108,83 +109,223 @@ Everything is importable from `cloud_workflows`.
 
 ## Builder API
 
-### StepBuilder
+The builder API provides a class-based, imperative approach to constructing workflows.
 
-`StepBuilder` accumulates an ordered list of workflow steps. Every method returns `self` for chaining.
+### Steps
 
-#### Step Methods
+`Steps` is the universal container for workflow steps. Steps are added via the `__call__` protocol.
 
-Each method takes a `name` (step name) as its first positional argument, an optional callback as its second, and keyword arguments for simple cases. The callback receives the corresponding sub-builder.
-
-| Method | Callback type | Key kwargs |
-|---|---|---|
-| `.assign(name, cb, **items)` | `Assign` | Any key-value pairs become assignments |
-| `.call(name, cb, *, func, args, result, next)` | `Call` | |
-| `.returns(name, cb, *, value)` | `Returns` | Aliases: `.return_()`, `.do_return()` |
-| `.raises(name, cb, *, value)` | `Raises` | Aliases: `.raise_()`, `.do_raise()` |
-| `.switch(name, cb, *, conditions, next)` | `Switch` | `conditions`: list of dicts |
-| `.loop(name, cb, *, value, in_, range_, index, steps)` | `Loop` | Alias: `.for_()`. `steps`: `StepBuilder` or lambda |
-| `.parallel(name, cb, *, branches, shared, exception_policy, concurrency_limit)` | `Parallel` | `branches`: dict of name -> StepBuilder/lambda |
-| `.do_try(name, cb, *, body, retry, except_)` | `DoTry` | Alias: `.try_()`. `body`/`except_.steps`: StepBuilder or lambda |
-| `.nested_steps(name, cb, *, body, next)` | `Steps` | `body`: StepBuilder or lambda |
-| `.raw(name, body)` | — | Escape hatch: accepts a sub-builder instance or Pydantic model directly |
-
-#### Composition
+```python
+s = Steps()
+s("step_id", StepType)      # add a named step (returns None)
+s(other_steps)               # merge steps from another Steps container
+s.build() -> list[dict]      # serialize to list of step dicts
+s._finalize() -> Workflow    # convert to SimpleWorkflow or SubworkflowsWorkflow
+```
 
 | Method | Description |
 |---|---|
-| `.apply(source)` | Merge steps from another `StepBuilder` or `Callable[[], Optional[StepBuilder]]` |
-| `.build()` | Finalize into a `list[Step]` |
+| `s("name", step)` | Add a named step. `step` must be a `StepType` instance. Returns `None`. |
+| `s(other)` | Merge all steps from another `Steps` instance (appends in order). |
+| `s.build()` | Serialize to `list[dict]` — each entry is `{step_id: body}`. |
+| `s._finalize()` | Convert to a Pydantic workflow model (`SimpleWorkflow` or `SubworkflowsWorkflow`). |
+| `len(s)` | Number of steps. |
 
-### Sub-Builders
-
-Each sub-builder configures one step type via chaining:
-
-**`Assign`** — `.set(key, value)`, `.items(list)`, `.next(target)`, `.apply(source)`. Dot-separated keys in `.set()` are auto-unnested: `.set("a.b.c", 1)` produces `{"a": {"b": {"c": 1}}}`.
-
-**`Call(function="")`** — `.func(name)`, `.args(**kwargs)`, `.result(name)`, `.next(target)`, `.apply(source)`
-
-**`Return_(value=UNSET)`** — `.value(v)`, `.apply(source)`. Aliases: `Returns`, `DoReturn`
-
-**`Raise_(value=UNSET)`** — `.value(v)`, `.apply(source)`. Aliases: `Raises`, `DoRaise`
-
-**`Switch`** — `.condition(cond, *, next, steps, assign, returns, raises)`, `.next(target)`, `.apply(source)`. Deprecated params: `return_`, `raise_`
-
-**`For(value="")`** — `.value(name)`, `.items(list)`, `.range(r)`, `.index(name)`, `.steps(sb_or_lambda)`, `.apply(source)`. Alias: `Loop`. Deprecated: `.in_()`, `.range_()`
-
-**`Parallel`** — `.branch(name, sb_or_lambda)`, `.shared(vars)`, `.exception_policy(policy)`, `.concurrency_limit(limit)`, `.apply(source)`
-
-**`Try_(body=None)`** — `.body(sb_or_lambda)`, `.retry(*, predicate, max_retries, backoff)`, `.exception(*, error, steps)`, `.apply(source)`. Alias: `DoTry`. Deprecated: `.except_(as_=, steps=)`
-
-**`Steps(body=None)`** — `.body(sb_or_lambda)`, `.next(target)`, `.apply(source)`
-
-Every sub-builder has a `.build()` method that returns the corresponding Pydantic model (e.g. `Assign.build()` returns `AssignStep`).
-
-### Workflow / Subworkflow
-
-`Workflow` extends `StepBuilder` for building workflows. For simple workflows, chain steps directly. For multi-workflow definitions, pass a `dict[str, Subworkflow]` to the constructor.
-
-`Subworkflow` extends `StepBuilder` and accepts an optional `params` list.
-
-| Class | Description |
-|---|---|
-| `Workflow()` | Simple mode — chain steps directly, then call `()` or `.build()` to get `SimpleWorkflow` |
-| `Workflow({"main": sub, "helper": sub})` | Multi-workflow mode — pass named `Subworkflow` instances, call `()` to get `SubworkflowsWorkflow` |
-| `Subworkflow(params=[...])` | A named workflow with optional parameters |
-
-Calling a `Workflow` instance (`w()`) finalizes it. `.build()` is an alias that does the same thing.
-
-#### Legacy: WorkflowBuilder
-
-`WorkflowBuilder` is kept for backward compatibility. It provides `.workflow(name, steps, *, params)` and `.steps(steps)` methods. New code should use `Workflow`/`Subworkflow` instead.
-
-### `build()` Function
+Constructor:
 
 ```python
-build(workflows: dict[str, Workflow], output_dir: str | Path = ".") -> list[Path]
+Steps(*, params=None)
 ```
 
-Writes each `{filename: workflow}` entry as a YAML file to `output_dir`. Creates directories as needed. Returns the list of written file paths. Values can be finalized models (`SimpleWorkflow`/`SubworkflowsWorkflow`) or unfinalized `Workflow` builder instances (auto-finalized).
+| Arg | Description |
+|---|---|
+| `params` | Optional `list` of parameter names (strings) or parameter dicts with defaults (e.g. `[{"timeout": 30}]`). When set, the container represents a subworkflow. |
+
+### Step Classes
+
+All step classes extend `StepType`. Each has a `build(step_id) -> dict` method that returns `{step_id: <body>}`.
+
+#### Assign
+
+```python
+Assign(mapping=None, /, *, next=None, **kwargs)
+```
+
+| Arg | Description |
+|---|---|
+| `mapping` | Optional dict with dotted-path keys (e.g. `{"a.b.c": 1}`). Dot-separated keys auto-expand to nested dicts via `jsonpath-ng`. |
+| `next` | Jump target step name. |
+| `**kwargs` | Simple variable assignments. |
+
+At least one assignment (from `mapping` or `kwargs`) is required.
+
+#### Call
+
+```python
+Call(func, *, args=None, result=None, next=None)
+```
+
+| Arg | Description |
+|---|---|
+| `func` | Function name to call (required). |
+| `args` | Dict of keyword arguments. |
+| `result` | Variable name to store the return value. |
+| `next` | Jump target step name. |
+
+#### Return
+
+```python
+Return(value)
+```
+
+| Arg | Description |
+|---|---|
+| `value` | The value to return (required). Can be any value including `None`. |
+
+#### Raise
+
+```python
+Raise(value)
+```
+
+| Arg | Description |
+|---|---|
+| `value` | The error value to raise (required). Can be a string, dict, expression, etc. |
+
+#### Switch
+
+```python
+Switch(conditions, *, next=None)
+```
+
+| Arg | Description |
+|---|---|
+| `conditions` | List of `Condition` objects (at least one required). |
+| `next` | Default fallthrough target. |
+
+#### Condition
+
+```python
+Condition(condition, *, next=None, steps=None, assign=None, return_=UNSET, raise_=UNSET)
+```
+
+| Arg | Description |
+|---|---|
+| `condition` | The condition expression. |
+| `next` | Jump target. |
+| `steps` | Inline `Steps` container to execute. |
+| `assign` | Inline assignments (list of single-key dicts). |
+| `return_` | Return value if condition is true. Uses `_UNSET` sentinel; `None` is a valid value. |
+| `raise_` | Raise value if condition is true. Uses `_UNSET` sentinel; `None` is a valid value. |
+
+#### For
+
+```python
+For(*, value, in_=None, range=None, index=None, steps)
+```
+
+| Arg | Description |
+|---|---|
+| `value` | Loop variable name (required). |
+| `in_` | Collection to iterate (mutually exclusive with `range`). |
+| `range` | Range specification `[start, end]` or `[start, end, step]`. |
+| `index` | Optional index variable name. |
+| `steps` | Loop body — `Steps` container or list of dicts (required). |
+
+#### Parallel
+
+```python
+Parallel(*, branches, shared=None, exception_policy=None, concurrency_limit=None)
+```
+
+| Arg | Description |
+|---|---|
+| `branches` | Dict of `{name: Steps}` (at least one required). |
+| `shared` | List of shared variable names. |
+| `exception_policy` | Exception handling policy (e.g. `"continueAll"`). |
+| `concurrency_limit` | Max concurrent branches. |
+
+#### Try
+
+```python
+Try(*, steps, retry=None, except_=None)
+```
+
+| Arg | Description |
+|---|---|
+| `steps` | Try body — `Steps` container or list of dicts (required). |
+| `retry` | Retry config — dict, `RetryConfig` model, or string predicate name. |
+| `except_` | Except handler — dict with `"as"` and `"steps"` keys, or `ExceptBody` model. |
+
+Try body auto-detection: if the body is a single Call step, it produces a `TryCallBody` (flat call fields); otherwise a `TryStepsBody` (nested steps list).
+
+Retry dict format:
+
+```python
+{
+    "predicate": "http.default_retry",    # or an expression
+    "max_retries": 3,
+    "backoff": {
+        "initial_delay": 1,
+        "max_delay": 60,
+        "multiplier": 2,
+    },
+}
+```
+
+#### NestedSteps
+
+```python
+NestedSteps(*, steps, next=None)
+```
+
+| Arg | Description |
+|---|---|
+| `steps` | Nested `Steps` container or list of dicts. |
+| `next` | Jump target step name. |
+
+### build() Function
+
+```python
+build(workflows: dict[str, Steps | dict[str, Steps] | Workflow], output_dir: str | Path = ".") -> list[Path]
+```
+
+Writes each `{filename: workflow}` entry as a YAML file to `output_dir`. Creates directories as needed. Returns the list of written file paths.
+
+Values can be:
+
+| Type | Behavior |
+|---|---|
+| `Steps` | Auto-finalized. No params → `SimpleWorkflow`; with params → `SubworkflowsWorkflow`. |
+| `dict[str, Steps]` | Multi-workflow. Assembled into `SubworkflowsWorkflow`. Single `"main"` without params collapses to `SimpleWorkflow`. |
+| `SimpleWorkflow` / `SubworkflowsWorkflow` | Passed through directly. |
+
+### Composition
+
+Steps containers are composable via the merge protocol:
+
+```python
+common = Steps()
+common("log", Call("sys.log", args={"text": "starting"}))
+
+main = Steps()
+main(common)                # merges steps from common
+main("done", Return("ok"))
+```
+
+Factory functions that return `Steps` instances are the primary composition pattern:
+
+```python
+def logging_steps(message):
+    s = Steps()
+    s("log", Call("sys.log", args={"text": message}))
+    return s
+
+main = Steps()
+main("init", Assign(status="starting"))
+main(logging_steps("Workflow started"))
+main("done", Return("ok"))
+```
 
 ---
 
@@ -255,33 +396,11 @@ Python reserved words use trailing underscores as field names. Pydantic aliases 
 | `except_` | `except` |
 | `try_` | `try` |
 
-### Builder Aliases
-
-The builder API provides friendlier names that avoid trailing underscores. These are the preferred names — the original underscore names continue to work.
-
-| Preferred | Original | Notes |
-|---|---|---|
-| `StepBuilder.returns()` | `.return_()`, `.do_return()` | |
-| `StepBuilder.raises()` | `.raise_()`, `.do_raise()` | |
-| `StepBuilder.loop()` | `.for_()` | |
-| `StepBuilder.do_try()` | `.try_()` | |
-| `Returns` class | `Return_`, `DoReturn` | Same class object |
-| `Raises` class | `Raise_`, `DoRaise` | Same class object |
-| `Loop` class | `For` | Same class object |
-| `DoTry` class | `Try_` | Same class object |
-| `For.items()` | `.in_()` | |
-| `For.range()` | `.range_()` | |
-| `Try_.exception(error=)` | `.except_(as_=)` | |
-| `Switch.condition(returns=, raises=)` | `(return_=, raise_=)` | |
-| `Workflow` / `Subworkflow` | `WorkflowBuilder` | |
-| `Workflow()()` (callable) | `.build()` | Both finalize the workflow |
-| `build({...})` (dict) | `build([(...),...])` | Dict replaces list-of-tuples |
-
 ---
 
 ## Architecture
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full builder pipeline, StepBase dict-state design, nested step resolution, and validation pipeline diagrams.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full builder pipeline, step class design, and validation pipeline diagrams.
 
 ### Module Map
 
@@ -292,8 +411,8 @@ src/cloud_workflows/
     expressions.py    Pratt parser for ${...} expressions
     variables.py      Scope-based variable tracking
     parser.py         Analysis pipeline (analyze_yaml, analyze_workflow)
-    builder.py        StepBuilder, Workflow, Subworkflow, WorkflowBuilder, build()
-    steps.py          StepBase + sub-builder classes (Assign, Call, Switch, etc.)
+    builder.py        Steps container + build() function
+    steps.py          StepType base + step classes (Assign, Call, Switch, etc.)
 ```
 
 ### Processing Pipeline
@@ -306,7 +425,7 @@ src/cloud_workflows/
                               v
             +-----------------------------------+
             |  Stage 1: Structural Validation   |
-            |  (models.py — Pydantic v2)        |
+            |  (models.py -- Pydantic v2)       |
             |                                   |
             |  yaml.safe_load() + Pydantic      |
             |  model validation: types, field   |
@@ -359,7 +478,7 @@ The expression parser handles GCP Workflows `${...}` expression syntax using a P
 | Identifiers | `IDENT` | `my_var`, `response`, `len` |
 | Operators | `PLUS`, `MINUS`, `STAR`, `SLASH`, `PERCENT`, `EQ`, `NEQ`, `LT`, `LTE`, `GT`, `GTE` | `+`, `==`, `<=` |
 | Delimiters | `LPAREN`, `RPAREN`, `LBRACKET`, `RBRACKET`, `LBRACE`, `RBRACE`, `DOT`, `COMMA`, `COLON` | `(`, `]`, `.` |
-| End | `EOF` | — |
+| End | `EOF` | -- |
 
 ### Lexing
 
@@ -467,7 +586,7 @@ In Form B workflows, all subworkflow names are collected before analysis. Identi
 
 ### Root Variable Extraction
 
-Nested access like `config.key1` or `items[0]` is treated as a modification of the root variable (`config`, `items`). Only the root is registered in scope. `extract_variable_references()` returns only root identifiers — `response.body.data[0].name` yields `["response"]`. Built-in function names (`len`, `keys`, `int`, `double`, `string`, `bool`, `type`, `not`) followed by `(` are excluded.
+Nested access like `config.key1` or `items[0]` is treated as a modification of the root variable (`config`, `items`). Only the root is registered in scope. `extract_variable_references()` returns only root identifiers -- `response.body.data[0].name` yields `["response"]`. Built-in function names (`len`, `keys`, `int`, `double`, `string`, `bool`, `type`, `not`) followed by `(` are excluded.
 
 ---
 
@@ -478,6 +597,7 @@ cloud-workflows-generator/
     pyproject.toml
     README.md
     REFERENCE.md
+    ARCHITECTURE.md
     docs/
         01_overview.md          GCP Workflows top-level structure
         02_steps.md             Step type schemas
@@ -492,8 +612,8 @@ cloud-workflows-generator/
         expressions.py          Pratt parser for ${...} expressions
         variables.py            Scope-based variable tracking
         parser.py               Analysis pipeline functions
-        builder.py              StepBuilder + WorkflowBuilder
-        steps.py                Sub-builder classes
+        builder.py              Steps container + build() function
+        steps.py                StepType base + step classes
     tests/
         conftest.py             Shared test helpers
         validation/             YAML parsing + validation tests
@@ -536,4 +656,4 @@ cloud-workflows-generator/
 PYTHONPATH=src python -m pytest tests/ -v
 ```
 
-436 tests: 263 validation (structural + expression + variable), 173 builder (step builder + workflow builder + CDK + build).
+390 tests: 304 validation/CDK + 86 builder (step builder + workflow builder + build).
