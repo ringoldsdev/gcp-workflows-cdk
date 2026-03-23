@@ -205,15 +205,15 @@ class VariableAnalyzer:
         elif isinstance(body, SwitchStep):
             self._analyze_switch(body, scope, step.name, workflow_name)
         elif isinstance(body, ForStep):
-            self._analyze_for(body.for_body, scope, step.name, workflow_name)
+            self._analyze_for(body.loop, scope, step.name, workflow_name)
         elif isinstance(body, TryStep):
             self._analyze_try(body, scope, step.name, workflow_name)
         elif isinstance(body, ParallelStep):
             self._analyze_parallel(body.parallel, scope, step.name, workflow_name)
         elif isinstance(body, ReturnStep):
-            self._check_value_refs(body.return_value, scope, step.name, workflow_name)
+            self._check_value_refs(body.returns, scope, step.name, workflow_name)
         elif isinstance(body, RaiseStep):
-            self._check_value_refs(body.raise_value, scope, step.name, workflow_name)
+            self._check_value_refs(body.raises, scope, step.name, workflow_name)
         elif isinstance(body, NestedStepsStep):
             # Nested steps share the same scope (not block-scoped)
             self._analyze_steps(body.steps, scope, workflow_name)
@@ -295,14 +295,10 @@ class VariableAnalyzer:
                 # Collect new definitions from branch scope
                 branch_defined |= branch_scope._vars.keys()
 
-            if cond.return_value is not None:
-                self._check_value_refs(
-                    cond.return_value, scope, step_name, workflow_name
-                )
-            if cond.raise_value is not None:
-                self._check_value_refs(
-                    cond.raise_value, scope, step_name, workflow_name
-                )
+            if cond.returns is not None:
+                self._check_value_refs(cond.returns, scope, step_name, workflow_name)
+            if cond.raises is not None:
+                self._check_value_refs(cond.raises, scope, step_name, workflow_name)
 
             branch_vars.append(branch_defined)
 
@@ -333,8 +329,8 @@ class VariableAnalyzer:
     ) -> None:
         """Process a for step: loop variables are loop-scoped."""
         # Check the 'in' or 'range' expression
-        if for_body.in_value is not None:
-            self._check_value_refs(for_body.in_value, scope, step_name, workflow_name)
+        if for_body.items is not None:
+            self._check_value_refs(for_body.items, scope, step_name, workflow_name)
         if for_body.range is not None:
             self._check_value_refs(for_body.range, scope, step_name, workflow_name)
 
@@ -367,7 +363,7 @@ class VariableAnalyzer:
         workflow_name: str,
     ) -> None:
         """Process a try step."""
-        try_body = try_step.try_body
+        try_body = try_step.steps
 
         if isinstance(try_body, TryCallBody):
             if try_body.args:
@@ -384,16 +380,16 @@ class VariableAnalyzer:
             self._analyze_steps(try_body.steps, scope, workflow_name)
 
         # Except block: 'as' variable is scoped to the except block
-        if try_step.except_body:
+        if try_step.error_steps:
             except_scope = scope.child(f"{step_name}/except")
             except_scope.define(
                 VariableDefinition(
-                    name=try_step.except_body.as_value,
+                    name=try_step.error_steps.alias,
                     kind=DefinitionKind.EXCEPT_AS,
                     step_name=step_name,
                 )
             )
-            self._analyze_steps(try_step.except_body.steps, except_scope, workflow_name)
+            self._analyze_steps(try_step.error_steps.steps, except_scope, workflow_name)
 
     def _analyze_parallel(
         self,
@@ -415,8 +411,8 @@ class VariableAnalyzer:
                 # Shared variables are accessible in the branch
                 self._analyze_steps(branch.steps, branch_scope, workflow_name)
 
-        if parallel.for_body:
-            self._analyze_for(parallel.for_body, scope, step_name, workflow_name)
+        if parallel.loop:
+            self._analyze_for(parallel.loop, scope, step_name, workflow_name)
 
     # -- Value reference checking ---------------------------------------------
 

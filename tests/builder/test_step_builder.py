@@ -174,7 +174,7 @@ class TestReturn:
         assert d == [{"done": {"return": "${x + y}"}}]
 
     def test_return_matches_model(self):
-        model = ReturnStep(return_value="ok")
+        model = ReturnStep(returns="ok")
         body = model.model_dump(by_alias=True, exclude_none=True)
         s = Steps()
         s.step("done", Return("ok"))

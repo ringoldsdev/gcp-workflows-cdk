@@ -51,7 +51,7 @@ StepType
   +-- Switch      -> SwitchStep         conditions: list[Condition], next
   +-- For         -> ForStep            value, in/range, index, steps
   +-- Parallel    -> ParallelStep       branches: dict[str, Steps], shared, ...
-  +-- Try         -> TryStep            steps, retry (Retry class), except_
+  +-- Try         -> TryStep            steps, retry (Retry class), error_steps
   +-- NestedSteps -> NestedStepsStep    steps, next
 ```
 

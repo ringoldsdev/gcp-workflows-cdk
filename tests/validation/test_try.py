@@ -19,15 +19,15 @@ def test_try_except_call():
     assert step.name == "attempt"
     body = step.body
     assert isinstance(body, TryStep)
-    assert isinstance(body.try_body, TryCallBody)
-    assert body.try_body.call == "http.get"
-    assert body.try_body.args == {"url": "https://example.com/might-fail"}
-    assert body.try_body.result == "response"
-    assert body.except_body is not None
-    assert body.except_body.as_value == "e"
-    assert len(body.except_body.steps) == 2
-    assert body.except_body.steps[0].name == "log"
-    assert body.except_body.steps[1].name == "default"
+    assert isinstance(body.steps, TryCallBody)
+    assert body.steps.call == "http.get"
+    assert body.steps.args == {"url": "https://example.com/might-fail"}
+    assert body.steps.result == "response"
+    assert body.error_steps is not None
+    assert body.error_steps.alias == "e"
+    assert len(body.error_steps.steps) == 2
+    assert body.error_steps.steps[0].name == "log"
+    assert body.error_steps.steps[1].name == "default"
 
 
 def test_try_except_steps():
@@ -38,14 +38,14 @@ def test_try_except_steps():
     assert step.name == "attempt"
     body = step.body
     assert isinstance(body, TryStep)
-    assert isinstance(body.try_body, TryStepsBody)
-    assert len(body.try_body.steps) == 2
-    assert body.try_body.steps[0].name == "get_token"
-    assert body.try_body.steps[1].name == "use_token"
-    assert body.except_body is not None
-    assert body.except_body.as_value == "e"
-    assert len(body.except_body.steps) == 1
-    assert body.except_body.steps[0].name == "handle"
+    assert isinstance(body.steps, TryStepsBody)
+    assert len(body.steps.steps) == 2
+    assert body.steps.steps[0].name == "get_token"
+    assert body.steps.steps[1].name == "use_token"
+    assert body.error_steps is not None
+    assert body.error_steps.alias == "e"
+    assert len(body.error_steps.steps) == 1
+    assert body.error_steps.steps[0].name == "handle"
 
 
 def test_try_retry_predefined():
@@ -56,7 +56,7 @@ def test_try_retry_predefined():
     assert step.name == "reliable"
     body = step.body
     assert isinstance(body, TryStep)
-    assert body.try_body.call == "http.get"
+    assert body.steps.call == "http.get"
     assert body.retry == "${http.default_retry}"
 
 
@@ -68,8 +68,8 @@ def test_try_retry_custom():
     assert step.name == "reliable"
     body = step.body
     assert isinstance(body, TryStep)
-    assert body.try_body.call == "http.post"
-    assert body.try_body.result == "response"
+    assert body.steps.call == "http.post"
+    assert body.steps.result == "response"
     assert isinstance(body.retry, RetryConfig)
     assert body.retry.predicate == "${http.default_retry_predicate}"
     assert body.retry.max_retries == 5
@@ -86,7 +86,7 @@ def test_try_retry_except_combined():
     assert step.name == "robust"
     body = step.body
     assert isinstance(body, TryStep)
-    assert body.try_body.call == "http.get"
+    assert body.steps.call == "http.get"
     # Verify retry
     assert isinstance(body.retry, RetryConfig)
     assert body.retry.predicate == "${http.default_retry_predicate}"
@@ -95,7 +95,7 @@ def test_try_retry_except_combined():
     assert body.retry.backoff.max_delay == 30
     assert body.retry.backoff.multiplier == 2
     # Verify except
-    assert body.except_body is not None
-    assert body.except_body.as_value == "e"
-    assert len(body.except_body.steps) == 1
-    assert body.except_body.steps[0].name == "fallback"
+    assert body.error_steps is not None
+    assert body.error_steps.alias == "e"
+    assert len(body.error_steps.steps) == 1
+    assert body.error_steps.steps[0].name == "fallback"

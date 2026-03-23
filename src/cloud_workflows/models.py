@@ -134,7 +134,7 @@ class RetryConfig(BaseModel):
 class ExceptBody(BaseModel):
     model_config = ConfigDict(strict=False, populate_by_name=True)
 
-    as_value: str = Field(..., alias="as")
+    alias: str = Field(..., alias="as")
     steps: List[Step]
 
 
@@ -178,8 +178,8 @@ class SwitchCondition(BaseModel):
     next: Optional[str] = None
     steps: Optional[List[Step]] = None
     assign: Optional[List[Dict[str, Any]]] = None
-    return_value: Optional[Any] = Field(default=None, alias="return")
-    raise_value: Optional[Any] = Field(default=None, alias="raise")
+    returns: Optional[Any] = Field(default=None, alias="return")
+    raises: Optional[Any] = Field(default=None, alias="raise")
 
 
 # =============================================================================
@@ -237,13 +237,13 @@ class ForBody(BaseModel):
 
     value: str
     index: Optional[str] = None
-    in_value: Optional[Any] = Field(default=None, alias="in")
+    items: Optional[Any] = Field(default=None, alias="in")
     range: Optional[Any] = None
     steps: List[Step]
 
     @model_validator(mode="after")
     def validate_mutual_exclusivity(self) -> ForBody:
-        has_in = self.in_value is not None
+        has_in = self.items is not None
         has_range = self.range is not None
         if has_in == has_range:
             raise ValueError("Exactly one of 'in' or 'range' must be specified")
@@ -298,7 +298,7 @@ class CallStep(BaseModel):
 class ReturnStep(BaseModel):
     model_config = ConfigDict(strict=False, populate_by_name=True)
 
-    return_value: Any = Field(..., alias="return")
+    returns: Any = Field(..., alias="return")
 
 
 # =============================================================================
@@ -309,7 +309,7 @@ class ReturnStep(BaseModel):
 class RaiseStep(BaseModel):
     model_config = ConfigDict(strict=False, populate_by_name=True)
 
-    raise_value: Any = Field(..., alias="raise")
+    raises: Any = Field(..., alias="raise")
 
 
 # =============================================================================
@@ -332,7 +332,7 @@ class NestedStepsStep(BaseModel):
 class ForStep(BaseModel):
     model_config = ConfigDict(strict=False, populate_by_name=True)
 
-    for_body: ForBody = Field(..., alias="for")
+    loop: ForBody = Field(..., alias="for")
 
 
 # =============================================================================
@@ -347,12 +347,12 @@ class ParallelBody(BaseModel):
     shared: Optional[List[str]] = None
     concurrency_limit: Optional[Union[int, str]] = None
     branches: Optional[List[Branch]] = None
-    for_body: Optional[ForBody] = Field(default=None, alias="for")
+    loop: Optional[ForBody] = Field(default=None, alias="for")
 
     @model_validator(mode="after")
     def validate_mutual_exclusivity(self) -> ParallelBody:
         has_branches = self.branches is not None
-        has_for = self.for_body is not None
+        has_for = self.loop is not None
         if has_branches == has_for:
             raise ValueError(
                 "Exactly one of 'branches' or 'for' must be specified in parallel"
@@ -429,9 +429,9 @@ RetryPolicy = Annotated[
 class TryStep(BaseModel):
     model_config = ConfigDict(strict=False, populate_by_name=True)
 
-    try_body: TryBody = Field(..., alias="try")
+    steps: TryBody = Field(..., alias="try")
     retry: Optional[RetryPolicy] = None
-    except_body: Optional[ExceptBody] = Field(default=None, alias="except")
+    error_steps: Optional[ExceptBody] = Field(default=None, alias="except")
 
 
 # =============================================================================

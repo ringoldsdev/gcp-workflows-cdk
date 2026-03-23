@@ -19,7 +19,7 @@ class MyModel(BaseModel):
 ```
 
 - `strict=False` — allows coercion (e.g., int to float in BackoffConfig).
-- `populate_by_name=True` — required so that programmatic construction can use the Python field name (`return_`) while YAML parsing uses the alias (`return`).
+- `populate_by_name=True` — required so that programmatic construction can use the Python field name (`returns`) while YAML parsing uses the alias (`return`).
 
 All 18 model classes repeat this config. A shared base class was considered but rejected: the explicit repetition is low-cost (one line), avoids inheritance complexity, and keeps each model self-contained.
 
@@ -29,19 +29,19 @@ Seven fields alias Python reserved words:
 
 | Python name | Alias | Model(s) |
 |---|---|---|
-| `return_` | `"return"` | ReturnStep, SwitchCondition |
-| `raise_` | `"raise"` | RaiseStep, SwitchCondition |
-| `for_` | `"for"` | ForStep, ParallelBody |
-| `in_` | `"in"` | ForBody |
-| `as_` | `"as"` | ExceptBody |
-| `except_` | `"except"` | TryStep |
-| `try_` | `"try"` | TryStep |
+| `returns` | `"return"` | ReturnStep, SwitchCondition |
+| `raises` | `"raise"` | RaiseStep, SwitchCondition |
+| `loop` | `"for"` | ForStep, ParallelBody |
+| `items` | `"in"` | ForBody |
+| `alias` | `"as"` | ExceptBody |
+| `error_steps` | `"except"` | TryStep |
+| `steps` | `"try"` | TryStep |
 
-Pattern: `field_: Type = Field(..., alias="keyword")`
+Pattern: `field_name: Type = Field(..., alias="keyword")`
 
 Combined with `populate_by_name=True`, these work in both directions:
 - YAML parsing: Pydantic reads the alias key from the dict.
-- Programmatic: `ReturnStep(return_="value")` uses the field name.
+- Programmatic: `ReturnStep(returns="value")` uses the field name.
 - Serialization: `model_dump(by_alias=True)` emits the alias.
 
 ### 3. Field constraints
@@ -105,8 +105,8 @@ def from_raw(cls, data: Any) -> Any:
 
 Two models use `@model_validator(mode="after")` for mutual exclusivity checks:
 
-- **ForBody** — exactly one of `in_` or `range`; `index` only with `in_`.
-- **ParallelBody** — exactly one of `branches` or `for_`; branches count 2-10.
+- **ForBody** — exactly one of `items` or `range`; `index` only with `items`.
+- **ParallelBody** — exactly one of `branches` or `loop`; branches count 2-10.
 
 ### 7. field_validator(mode="before")
 
@@ -136,7 +136,7 @@ Standard call pattern throughout:
 model_dump(by_alias=True, exclude_none=True)
 ```
 
-- `by_alias=True` — emits YAML-compatible keys (`return` not `return_`).
+- `by_alias=True` — emits YAML-compatible keys (`return` not `returns`).
 - `exclude_none=True` — omits optional fields that are None.
 
 ### 10. model_validate() for parsing
@@ -195,4 +195,4 @@ Using `Annotated[Type, BeforeValidator(func)]` instead of `@field_validator` dec
 
 4. **model_rebuild() order doesn't matter** — Pydantic resolves all forward refs at rebuild time regardless of call order. But all forward-referencing models must be rebuilt before any validation or serialization occurs.
 
-5. **populate_by_name=True is required for dual-mode (YAML + programmatic)** — without it, programmatic construction must use the alias name, which for Python keywords would require `ReturnStep(**{"return": value})` instead of `ReturnStep(return_=value)`.
+5. **populate_by_name=True is required for dual-mode (YAML + programmatic)** — without it, programmatic construction must use the alias name, which for Python keywords would require `ReturnStep(**{"return": value})` instead of `ReturnStep(returns=value)`.
