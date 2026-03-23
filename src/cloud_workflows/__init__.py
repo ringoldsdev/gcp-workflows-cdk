@@ -86,6 +86,16 @@ from .variables import (
     VariableIssue,
     Severity,
 )
+from .consts import (
+    STDLIB_FUNCTIONS,
+    RETRY_PREDICATES,
+    EXPRESSION_BUILTINS,
+    STDLIB_NAMESPACES,
+    is_stdlib_call,
+    is_retry_predicate,
+    is_expression_builtin,
+    is_stdlib_namespace,
+)
 
 __all__ = [
     # Parsing
@@ -148,6 +158,15 @@ __all__ = [
     "analyze_variables",
     "VariableIssue",
     "Severity",
+    # Constants
+    "STDLIB_FUNCTIONS",
+    "RETRY_PREDICATES",
+    "EXPRESSION_BUILTINS",
+    "STDLIB_NAMESPACES",
+    "is_stdlib_call",
+    "is_retry_predicate",
+    "is_expression_builtin",
+    "is_stdlib_namespace",
     # Model types (for direct construction / passthrough)
     "WorkflowDefinition",
     "Step",

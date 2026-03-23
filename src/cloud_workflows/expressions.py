@@ -923,7 +923,8 @@ def walk(node: Node) -> list[Node]:
 
 
 # Expression-context built-in functions (not variables)
-_BUILTINS: set[str] = {"len", "keys", "int", "double", "string", "bool", "type", "not"}
+# Canonical set lives in consts.py; import here to keep a single source of truth.
+from .consts import EXPRESSION_BUILTINS as _BUILTINS  # noqa: E402
 
 
 def extract_variable_references(expr_body: str) -> list[str]:
