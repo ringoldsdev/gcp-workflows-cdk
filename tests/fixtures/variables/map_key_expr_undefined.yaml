@@ -1,0 +1,5 @@
+# Map literal RHS with dynamic expression key — undefined variable in key
+- build_map:
+    assign:
+      - my_map:
+          ${undefined_key}: "value"

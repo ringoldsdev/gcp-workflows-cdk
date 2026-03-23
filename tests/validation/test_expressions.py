@@ -325,6 +325,22 @@ class TestExpressionExtraction:
         result = extract_expression_strings('${"hello {world}"}')
         assert len(result) == 1
 
+    def test_dict_keys_with_expressions(self):
+        """Expressions in dict keys should be extracted."""
+        result = extract_expression_strings({"${key_var}": "value", "static": 5})
+        assert result == ["key_var"]
+
+    def test_dict_keys_and_values_both_extracted(self):
+        """Both dict keys and values containing expressions are extracted."""
+        result = extract_expression_strings({"${k}": "${v}"})
+        assert sorted(result) == ["k", "v"]
+
+    def test_nested_dict_keys_with_expressions(self):
+        """Expressions in nested dict keys should be extracted recursively."""
+        data = {"outer": {"${inner_key}": "value"}}
+        result = extract_expression_strings(data)
+        assert result == ["inner_key"]
+
 
 # =============================================================================
 # Validate all expressions in a tree

@@ -867,7 +867,8 @@ def extract_expression_strings(value: Any) -> list[str]:
         for item in value:
             results.extend(extract_expression_strings(item))
     elif isinstance(value, dict):
-        for v in value.values():
+        for k, v in value.items():
+            results.extend(extract_expression_strings(k))
             results.extend(extract_expression_strings(v))
     return results
 

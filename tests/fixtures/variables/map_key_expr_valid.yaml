@@ -1,0 +1,9 @@
+# Map literal RHS with dynamic expression keys — all variables defined
+- init:
+    assign:
+      - key_name: "greeting"
+      - value: "hello"
+- build_map:
+    assign:
+      - my_map:
+          ${key_name}: ${value}

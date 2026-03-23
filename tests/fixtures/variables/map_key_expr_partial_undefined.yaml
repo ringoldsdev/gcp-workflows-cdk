@@ -1,0 +1,8 @@
+# Map literal RHS with expression in key using concatenation — one var undefined
+- init:
+    assign:
+      - prefix: "item_"
+- build_map:
+    assign:
+      - my_map:
+          ${prefix + suffix}: "value"

@@ -178,6 +178,12 @@ class TestValidVariables:
         issues = analyze_variables(wf)
         assert issues == []
 
+    def test_map_key_expression_valid(self):
+        """Map literal RHS with expression keys — all vars defined."""
+        wf = parse_fixture("variables", "map_key_expr_valid.yaml")
+        issues = analyze_variables(wf)
+        assert issues == []
+
 
 # =============================================================================
 # Undefined variable references (errors expected)
@@ -245,6 +251,22 @@ class TestUndefinedVariables:
         assert len(errors) == 2
         error_vars = {e.variable for e in errors}
         assert error_vars == {"undef_a", "undef_b"}
+
+    def test_map_key_expression_undefined(self):
+        """Expression in a YAML dict key referencing an undefined variable."""
+        wf = parse_fixture("variables", "map_key_expr_undefined.yaml")
+        issues = analyze_variables(wf)
+        errors = [i for i in issues if i.severity == Severity.ERROR]
+        assert len(errors) == 1
+        assert errors[0].variable == "undefined_key"
+
+    def test_map_key_expression_partial_undefined(self):
+        """Expression in a YAML dict key where one operand is undefined."""
+        wf = parse_fixture("variables", "map_key_expr_partial_undefined.yaml")
+        issues = analyze_variables(wf)
+        errors = [i for i in issues if i.severity == Severity.ERROR]
+        assert len(errors) == 1
+        assert errors[0].variable == "suffix"
 
 
 # =============================================================================
