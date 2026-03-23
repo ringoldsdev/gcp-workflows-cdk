@@ -134,16 +134,22 @@ def _resolve_steps(steps: Any) -> List[Dict[str, Any]]:
 class Assign(StepType):
     """Assign step — set one or more variables.
 
-    Usage::
+    Values sharing the same root key are deep-merged into a single
+    assignment entry.  Both dot-separated paths and pre-built nested
+    dicts are supported::
 
         Assign(x=10, y=20)
-        Assign({"a.b.c": 1}, x=10)    # dict for dotted paths
-        Assign(x=10, next="done")      # with jump target
+        Assign({"a.b.c": 1}, x=10)           # dotted paths
+        Assign({"config.http.timeout": 30,
+                "config.http.retries": 3})    # merged into one entry
+        Assign({"config": {"timeout": 30}})   # nested dict value
+        Assign(x=10, next="done")             # with jump target
 
     Args:
         mapping: Optional dict of variable assignments.  Keys may use
             dot-separated paths (e.g. ``"a.b.c"``) which are expanded
-            into nested dicts.
+            into nested dicts.  Nested dict values are also accepted
+            and will be deep-merged when sharing a root key.
         next: Jump target step name.
         **kwargs: Simple variable assignments.
     """
@@ -156,15 +162,15 @@ class Assign(StepType):
         next: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
-        items: List[Dict[str, Any]] = []
+        expanded: List[Dict[str, Any]] = []
         if mapping:
             for key, value in mapping.items():
-                items.append(_expand_dotpath(key, value))
+                expanded.append(_expand_dotpath(key, value))
         for key, value in kwargs.items():
-            items.append(_expand_dotpath(key, value))
-        if not items:
+            expanded.append(_expand_dotpath(key, value))
+        if not expanded:
             raise ValueError("Assign requires at least one assignment")
-        self._items = items
+        self._items = _merge_assign_items(expanded)
         self._next = next
 
     def build(self, step_id: str) -> Dict[str, Any]:
@@ -183,6 +189,40 @@ def _expand_dotpath(key: str, value: Any) -> Dict[str, Any]:
         jp_parse(key).update_or_create(result, value)
         return result
     return {key: value}
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively merge *override* into *base*, returning *base*.
+
+    When both sides have a dict for the same key the dicts are merged
+    recursively.  Otherwise the *override* value wins.
+    """
+    for key, val in override.items():
+        if key in base and isinstance(base[key], dict) and isinstance(val, dict):
+            _deep_merge(base[key], val)
+        else:
+            base[key] = val
+    return base
+
+
+def _merge_assign_items(
+    items: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Deep-merge assignment dicts that share the same root key.
+
+    Preserves insertion order of first occurrence.  Each input dict is
+    expected to be a single-key dict (as produced by ``_expand_dotpath``).
+    """
+    merged: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    for item in items:
+        root_key = next(iter(item))
+        if root_key not in merged:
+            merged[root_key] = item
+            order.append(root_key)
+        else:
+            _deep_merge(merged[root_key], item)
+    return [merged[k] for k in order]
 
 
 # ============================================================================

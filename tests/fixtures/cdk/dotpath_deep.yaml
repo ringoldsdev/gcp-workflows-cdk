@@ -3,7 +3,5 @@
       - config:
           http:
             timeout: 30
-      - config:
-          http:
             retries: 3
       - simple: true

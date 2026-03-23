@@ -770,6 +770,77 @@ class TestDotPathUnnesting:
         d = _to_dict(s)
         assert d == [{"init": {"assign": [{"x": 1}]}}]
 
+    def test_nested_dict_value(self):
+        """Passing a nested dict directly merges into one entry."""
+        s = Steps()
+        s.step(
+            "init",
+            Assign({"config": {"http": {"timeout": 30, "retries": 3}}}),
+        )
+        d = _to_dict(s)
+        assert d == [
+            {"init": {"assign": [{"config": {"http": {"timeout": 30, "retries": 3}}}]}}
+        ]
+
+    def test_nested_dict_and_dotpath_merge(self):
+        """A nested dict and a dot-path sharing a root key are merged."""
+        s = Steps()
+        s.step(
+            "init",
+            Assign(
+                {
+                    "config": {"http": {"timeout": 30}},
+                    "config.http.retries": 3,
+                }
+            ),
+        )
+        d = _to_dict(s)
+        assert d == [
+            {"init": {"assign": [{"config": {"http": {"timeout": 30, "retries": 3}}}]}}
+        ]
+
+    def test_disjoint_keys_stay_separate(self):
+        """Different root keys remain as separate assign entries."""
+        s = Steps()
+        s.step("init", Assign(x=1, y=2, z=3))
+        d = _to_dict(s)
+        assert d == [{"init": {"assign": [{"x": 1}, {"y": 2}, {"z": 3}]}}]
+
+    def test_merge_preserves_insertion_order(self):
+        """Root keys appear in first-seen order after merging."""
+        s = Steps()
+        s.step(
+            "init",
+            Assign(
+                {
+                    "a.x": 1,
+                    "b.y": 2,
+                    "a.z": 3,
+                }
+            ),
+        )
+        d = _to_dict(s)
+        assign_list = d[0]["init"]["assign"]
+        assert list(assign_list[0].keys()) == ["a"]
+        assert list(assign_list[1].keys()) == ["b"]
+        assert assign_list[0] == {"a": {"x": 1, "z": 3}}
+        assert assign_list[1] == {"b": {"y": 2}}
+
+    def test_scalar_override_on_merge(self):
+        """When merging, a later scalar value overwrites an earlier one."""
+        s = Steps()
+        s.step(
+            "init",
+            Assign(
+                {
+                    "config.timeout": 10,
+                    "config.timeout": 30,  # noqa: F601 — intentional duplicate
+                }
+            ),
+        )
+        d = _to_dict(s)
+        assert d == [{"init": {"assign": [{"config": {"timeout": 30}}]}}]
+
 
 # =============================================================================
 # Mixed construction
