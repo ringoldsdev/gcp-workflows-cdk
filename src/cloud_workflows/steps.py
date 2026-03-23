@@ -1,8 +1,15 @@
 """Step classes for constructing Cloud Workflows programmatically.
 
 Each step class represents a GCP Workflows step type. Instances are
-immutable descriptions of a step's configuration. They are added to a
-``Steps`` container via ``.step()``::
+immutable descriptions of a step's configuration. The preferred API
+uses convenience alias methods on ``Steps``::
+
+    s = (Steps()
+        .assign("init", x=10, y=20)
+        .call("log", "sys.log", args={"text": expr("x")})
+        .returns("done", expr("x + y")))
+
+For full control, use ``.step()`` with explicit step class instances::
 
     s = Steps()
     s.step("init", Assign(x=10, y=20))

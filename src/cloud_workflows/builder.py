@@ -1,27 +1,31 @@
 """Steps container and build() function for Cloud Workflows CDK.
 
 ``Steps`` is the universal container for workflow steps.  Steps are added
-via the ``.step()`` method which supports chaining::
+via convenience methods that mirror each step type::
 
-    s = Steps()
+    s = (Steps()
+        .assign("init", x=10, y=20)
+        .call("log", "sys.log", args={"text": expr("x")})
+        .returns("done", expr("x + y")))
+
+For full control you can also use the generic ``.step()`` method::
+
     s.step("init", Assign(x=10, y=20))
-     .step("log", Call("sys.log", args={"text": expr("x")}))
-     .step("done", Return(expr("x + y")))
 
 ``Steps`` instances are composable — merging steps from another container::
 
     common = Steps()
-    common.step("log", Call("sys.log", args={"text": "starting"}))
+    common.call("log", "sys.log", args={"text": "starting"})
 
     main = Steps()
-    main.merge(common)                # merges all steps from common
-    main.step("done", Return("ok"))
+    main.merge(common)
+    main.returns("done", "ok")
 
 For subworkflows with parameters, pass ``params`` to the constructor::
 
     helper = Steps(params=["input", {"timeout": 30}])
-    helper.step("log", Call("sys.log", args={"text": expr("input")}))
-    helper.step("done", Return("ok"))
+    helper.call("log", "sys.log", args={"text": expr("input")})
+    helper.returns("done", "ok")
 
 Write to disk with ``build()``::
 
@@ -48,7 +52,20 @@ from .models import (
     Workflow as WorkflowModel,
     WorkflowDefinition,
 )
-from .steps import StepType
+from .steps import (
+    StepType,
+    Assign as _Assign,
+    Call as _Call,
+    Return as _Return,
+    Raise as _Raise,
+    Switch as _Switch,
+    Condition,
+    For as _For,
+    Parallel as _Parallel,
+    Try as _Try,
+    NestedSteps as _NestedSteps,
+)
+from .retry import Retry
 
 __all__ = [
     "Steps",
@@ -64,11 +81,18 @@ __all__ = [
 class Steps:
     """Universal container for workflow steps.
 
-    Steps are added via the ``.step()`` method, which returns ``self``
-    for chaining::
+    The preferred API uses convenience alias methods that mirror each
+    step type::
 
-        s = Steps()
-        s.step("init", Assign(x=10)).step("done", Return("ok"))
+        s = (Steps()
+            .assign("init", x=10, y=20)
+            .call("log", "sys.log", args={"text": expr("x")})
+            .returns("done", expr("x + y")))
+
+    For full control, the generic ``.step()`` method accepts any
+    ``StepType`` instance::
+
+        s.step("init", Assign(x=10, y=20))
 
     Merge steps from another container via ``.merge()``::
 
@@ -129,6 +153,276 @@ class Steps:
 
     def __len__(self) -> int:
         return len(self._steps)
+
+    # -----------------------------------------------------------------
+    # Convenience aliases — delegate to .step(step_id, StepType(...))
+    # -----------------------------------------------------------------
+
+    def assign(
+        self,
+        step_id: str,
+        mapping: Optional[Dict[str, Any]] = None,
+        /,
+        *,
+        next: Optional[str] = None,
+        **kwargs: Any,
+    ) -> "Steps":
+        """Add an Assign step.
+
+        Args:
+            step_id: Unique identifier for this step.
+            mapping: Optional dict of variable assignments (supports
+                dot-separated paths).
+            next: Jump target step name.
+            **kwargs: Simple variable assignments.
+
+        Returns:
+            ``self`` for method chaining.
+
+        Example::
+
+            (Steps()
+                .assign("init", x=10, y=20)
+                .assign("paths", {"a.b.c": 1}))
+        """
+        return self.step(step_id, _Assign(mapping, next=next, **kwargs))
+
+    def call(
+        self,
+        step_id: str,
+        func: str,
+        *,
+        args: Optional[Dict[str, Any]] = None,
+        result: Optional[str] = None,
+        next: Optional[str] = None,
+    ) -> "Steps":
+        """Add a Call step.
+
+        Args:
+            step_id: Unique identifier for this step.
+            func: Function name to call.
+            args: Keyword arguments to pass to the function.
+            result: Variable name to store the result.
+            next: Jump target step name.
+
+        Returns:
+            ``self`` for method chaining.
+
+        Example::
+
+            (Steps()
+                .call("fetch", "http.get",
+                      args={"url": "https://example.com"},
+                      result="resp"))
+        """
+        return self.step(step_id, _Call(func, args=args, result=result, next=next))
+
+    def returns(
+        self,
+        step_id: str,
+        value: Any,
+    ) -> "Steps":
+        """Add a Return step.
+
+        Args:
+            step_id: Unique identifier for this step.
+            value: The value to return.
+
+        Returns:
+            ``self`` for method chaining.
+
+        Example::
+
+            Steps().returns("done", "ok")
+        """
+        return self.step(step_id, _Return(value))
+
+    def raises(
+        self,
+        step_id: str,
+        value: Any,
+    ) -> "Steps":
+        """Add a Raise step.
+
+        Args:
+            step_id: Unique identifier for this step.
+            value: The error value to raise.
+
+        Returns:
+            ``self`` for method chaining.
+
+        Example::
+
+            Steps().raises("fail", {"code": 404, "message": "not found"})
+        """
+        return self.step(step_id, _Raise(value))
+
+    def switch(
+        self,
+        step_id: str,
+        conditions: List[Condition],
+        /,
+        *,
+        next: Optional[str] = None,
+    ) -> "Steps":
+        """Add a Switch step.
+
+        Args:
+            step_id: Unique identifier for this step.
+            conditions: List of ``Condition`` objects.
+            next: Default fallthrough target.
+
+        Returns:
+            ``self`` for method chaining.
+
+        Example::
+
+            (Steps()
+                .switch("check", [
+                    Condition(expr("x > 0"), next="positive"),
+                    Condition(True, next="negative"),
+                ]))
+        """
+        return self.step(step_id, _Switch(conditions, next=next))
+
+    def loop(
+        self,
+        step_id: str,
+        *,
+        value: str,
+        items: Any = None,
+        range: Any = None,
+        index: Optional[str] = None,
+        steps: Any,
+    ) -> "Steps":
+        """Add a For (loop) step.
+
+        Args:
+            step_id: Unique identifier for this step.
+            value: Loop variable name.
+            items: Collection to iterate over (mutually exclusive with
+                ``range``).
+            range: Range specification ``[start, end, step]``.
+            index: Optional index variable name.
+            steps: Loop body (``Steps`` container, callable, or list).
+
+        Returns:
+            ``self`` for method chaining.
+
+        Example::
+
+            (Steps()
+                .loop("iterate",
+                      value="item",
+                      items=["a", "b", "c"],
+                      steps=inner))
+        """
+        return self.step(
+            step_id,
+            _For(value=value, items=items, range=range, index=index, steps=steps),
+        )
+
+    def parallel(
+        self,
+        step_id: str,
+        *,
+        branches: Dict[str, Any],
+        shared: Optional[List[str]] = None,
+        exception_policy: Optional[str] = None,
+        concurrency_limit: Optional[Union[int, str]] = None,
+    ) -> "Steps":
+        """Add a Parallel step.
+
+        Args:
+            step_id: Unique identifier for this step.
+            branches: Dict of branch name to ``Steps`` container (or list).
+            shared: List of shared variable names.
+            exception_policy: Exception handling policy.
+            concurrency_limit: Max concurrent branches.
+
+        Returns:
+            ``self`` for method chaining.
+
+        Example::
+
+            (Steps()
+                .parallel("fan_out",
+                          branches={"b1": steps1, "b2": steps2},
+                          shared=["result"]))
+        """
+        return self.step(
+            step_id,
+            _Parallel(
+                branches=branches,
+                shared=shared,
+                exception_policy=exception_policy,
+                concurrency_limit=concurrency_limit,
+            ),
+        )
+
+    def do_try(
+        self,
+        step_id: str,
+        *,
+        steps: Any,
+        retry: Optional[Retry] = None,
+        error_steps: Optional[Any] = None,
+    ) -> "Steps":
+        """Add a Try step.
+
+        The try body is auto-detected: a single Call step produces a flat
+        ``TryCallBody``; otherwise a ``TryStepsBody`` is used.
+
+        The error variable is always ``e`` (opinionated).
+
+        Args:
+            step_id: Unique identifier for this step.
+            steps: Try body (``Steps`` container, callable, or list).
+            retry: Optional ``Retry`` instance.
+            error_steps: Except handler steps.
+
+        Returns:
+            ``self`` for method chaining.
+
+        Example::
+
+            (Steps()
+                .do_try("safe_call",
+                        steps=body_steps,
+                        retry=Retry(expr("e.code == 429"),
+                                    max_retries=3),
+                        error_steps=handler_steps))
+        """
+        return self.step(
+            step_id,
+            _Try(steps=steps, retry=retry, error_steps=error_steps),
+        )
+
+    def nested(
+        self,
+        step_id: str,
+        *,
+        steps: Any,
+        next: Optional[str] = None,
+    ) -> "Steps":
+        """Add a NestedSteps step — group steps under a single step name.
+
+        Args:
+            step_id: Unique identifier for this step.
+            steps: Nested steps (``Steps`` container or list).
+            next: Jump target step name.
+
+        Returns:
+            ``self`` for method chaining.
+
+        Example::
+
+            (Steps()
+                .nested("group",
+                        steps=inner_steps,
+                        next="done"))
+        """
+        return self.step(step_id, _NestedSteps(steps=steps, next=next))
 
     def _finalize(self) -> Union[SimpleWorkflow, SubworkflowsWorkflow]:
         """Convert this Steps container into a Pydantic workflow model.

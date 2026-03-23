@@ -1,0 +1,17 @@
+- fan_out:
+    parallel:
+      branches:
+      - branch1:
+          steps:
+          - log1:
+              call: sys.log
+              args:
+                text: branch 1
+      - branch2:
+          steps:
+          - log2:
+              call: sys.log
+              args:
+                text: branch 2
+      shared:
+      - result

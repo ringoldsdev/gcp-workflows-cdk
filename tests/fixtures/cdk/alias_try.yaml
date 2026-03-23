@@ -1,0 +1,18 @@
+- safe_call:
+    try:
+      call: http.get
+      args:
+        url: https://example.com
+      result: response
+    retry:
+      predicate: ${e.code == 429}
+      max_retries: 3
+      backoff:
+        initial_delay: 1
+        max_delay: 30
+        multiplier: 2
+    except:
+      as: e
+      steps:
+      - handle:
+          raise: ${e}

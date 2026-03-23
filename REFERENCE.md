@@ -114,14 +114,20 @@ The builder API provides a class-based, imperative approach to constructing work
 
 ### Steps
 
-`Steps` is the universal container for workflow steps. Steps are added via `.step()` which returns `self` for chaining. Steps from other containers are merged via `.merge()`.
+`Steps` is the universal container for workflow steps. The primary API uses convenience alias methods (`.assign()`, `.call()`, `.returns()`, etc.) that mirror each step type. For full control, the generic `.step()` method accepts any `StepType` instance directly.
 
 ```python
-s = Steps()
-s.step("step_id", StepType)     # add a named step (returns self)
-s.merge(other_steps)             # merge steps from another container (returns self)
-s.build() -> list[dict]          # serialize to list of step dicts
-s._finalize() -> Workflow        # convert to SimpleWorkflow or SubworkflowsWorkflow
+# Preferred: alias methods
+s = (Steps()
+    .assign("init", x=10, y=20)
+    .call("log", "sys.log", args={"text": expr("x")})
+    .returns("done", expr("x + y")))
+
+# Generic: .step() with StepType instances
+s = (Steps()
+    .step("init", Assign(x=10, y=20))
+    .step("log", Call("sys.log", args={"text": expr("x")}))
+    .step("done", Return(expr("x + y"))))
 ```
 
 | Method | Description |
@@ -142,15 +148,56 @@ Steps(*, params=None)
 |---|---|
 | `params` | Optional `list` of parameter names (strings) or parameter dicts with defaults (e.g. `[{"timeout": 30}]`). When set, the container represents a subworkflow. |
 
+#### Alias Methods
+
+All alias methods take `step_id` as their first argument, then mirror the corresponding `StepType` constructor parameters. All return `self` for chaining.
+
+| Method | Delegates to | Signature |
+|---|---|---|
+| `.assign(step_id, mapping?, /, *, next?, **kwargs)` | `Assign` | Variable assignments via kwargs and/or dict mapping. |
+| `.call(step_id, func, *, args?, result?, next?)` | `Call` | Function/subworkflow call. |
+| `.returns(step_id, value)` | `Return` | Return a value. Named `returns` to avoid Python keyword `return`. |
+| `.raises(step_id, value)` | `Raise` | Raise an error. Named `raises` to avoid Python keyword `raise`. |
+| `.switch(step_id, conditions, /, *, next?)` | `Switch` | Conditional branching with list of `Condition` objects. |
+| `.loop(step_id, *, value, items?, range?, index?, steps)` | `For` | For-loop iteration. |
+| `.parallel(step_id, *, branches, shared?, exception_policy?, concurrency_limit?)` | `Parallel` | Parallel branches. |
+| `.do_try(step_id, *, steps, retry?, error_steps?)` | `Try` | Try/retry/except. Named `do_try` to avoid Python keyword `try`. |
+| `.nested(step_id, *, steps, next?)` | `NestedSteps` | Nested step group. |
+
+Example with full chaining:
+
+```python
+from cloud_workflows import Steps, Condition, Retry, Backoff, expr
+
+inner = Steps().call("log", "sys.log", args={"text": expr("item")})
+body = Steps().call("fetch", "http.get",
+                    args={"url": "https://example.com"},
+                    result="resp")
+
+s = (Steps()
+    .assign("init", x=10, y=20)
+    .call("log", "sys.log", args={"text": expr("x")})
+    .switch("check", [
+        Condition(expr("x > 0"), next="positive"),
+        Condition(True, next="negative"),
+    ])
+    .loop("iterate", value="item", items=["a", "b", "c"], steps=inner)
+    .do_try("safe",
+            steps=body,
+            retry=Retry(expr("e.code == 429"), max_retries=3,
+                        backoff=Backoff(initial_delay=1, max_delay=30, multiplier=2)))
+    .returns("done", expr("x + y")))
+```
+
 #### Method Chaining
 
-`.step()` and `.merge()` return `self`, enabling fluent chains:
+All methods (`.assign()`, `.call()`, `.step()`, `.merge()`, etc.) return `self`, enabling fluent chains:
 
 ```python
 s = (Steps()
-    .step("init", Assign(x=10))
-    .step("log", Call("sys.log", args={"text": expr("x")}))
-    .step("done", Return(expr("x"))))
+    .assign("init", x=10)
+    .call("log", "sys.log", args={"text": expr("x")})
+    .returns("done", expr("x")))
 ```
 
 ### Step Classes
@@ -308,14 +355,14 @@ NestedSteps(*, steps, next=None)
 
 ### Callables for Inline Steps
 
-Wherever a compound step accepts a `steps` parameter (For, Parallel branches, Try, Switch conditions, NestedSteps), you can pass a callable instead of a `Steps` instance. The callable receives a fresh `Steps` and its return value is ignored:
+Wherever a compound step accepts a `steps` parameter (`.loop()`, `.parallel()` branches, `.do_try()`, `.switch()` conditions, `.nested()`), you can pass a callable instead of a `Steps` instance. The callable receives a fresh `Steps` and its return value is ignored:
 
 ```python
-s.step("loop", For(
+s.loop("loop",
     value="item",
     items=["a", "b", "c"],
-    steps=lambda s: s.step("log", Call("sys.log", args={"text": expr("item")})),
-))
+    steps=lambda s: s.call("log", "sys.log", args={"text": expr("item")}),
+)
 ```
 
 ### build() Function
@@ -339,25 +386,23 @@ Each workflow value must be a `dict[str, Steps]` with a required `"main"` key:
 Steps containers are composable via `.merge()`:
 
 ```python
-common = (Steps()
-    .step("log", Call("sys.log", args={"text": "starting"})))
+common = Steps().call("log", "sys.log", args={"text": "starting"})
 
 main = (Steps()
     .merge(common)
-    .step("done", Return("ok")))
+    .returns("done", "ok"))
 ```
 
 Factory functions that return `Steps` instances are the primary composition pattern:
 
 ```python
 def logging_steps(message):
-    return (Steps()
-        .step("log", Call("sys.log", args={"text": message})))
+    return Steps().call("log", "sys.log", args={"text": message})
 
 main = (Steps()
-    .step("init", Assign(status="starting"))
+    .assign("init", status="starting")
     .merge(logging_steps("Workflow started"))
-    .step("done", Return("ok")))
+    .returns("done", "ok"))
 ```
 
 ---
@@ -666,10 +711,11 @@ cloud-workflows-generator/
             test_integration.py
         builder/                Workflow construction + CDK tests
             test_step_builder.py
+            test_alias_methods.py
             test_workflow_builder.py
             test_cdk.py
             test_build.py
-        fixtures/               YAML fixture files (95 files, 14 directories)
+        fixtures/               YAML fixture files (99 files, 14 directories)
             assign/
             call/
             cdk/
@@ -691,4 +737,4 @@ cloud-workflows-generator/
 PYTHONPATH=src python -m pytest tests/ -v
 ```
 
-410 tests: 304 validation/CDK + 106 builder (step builder + workflow builder + build).
+410 tests + 62 alias method tests = 472 total: validation/CDK + builder (step builder + alias methods + workflow builder + build).

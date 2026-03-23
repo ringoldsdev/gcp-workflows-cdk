@@ -1,0 +1,28 @@
+- init:
+    assign:
+    - x: 10
+    - y: 20
+- log:
+    call: sys.log
+    args:
+      text: ${x}
+- check:
+    switch:
+    - condition: ${x > 0}
+      next: positive
+    - condition: true
+      next: negative
+- iterate:
+    for:
+      value: item
+      in:
+      - a
+      - b
+      - c
+      steps:
+      - log_item:
+          call: sys.log
+          args:
+            text: ${item}
+- done:
+    return: ${x + y}
