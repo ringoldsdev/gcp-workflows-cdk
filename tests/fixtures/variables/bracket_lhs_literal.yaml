@@ -1,0 +1,8 @@
+# Bracket-notation LHS with string literal keys (no variable references)
+- init:
+    assign:
+      - my_map: {}
+- update:
+    assign:
+      - my_map["Key1"]: "value1"
+      - my_map["Key2"]: "value2"

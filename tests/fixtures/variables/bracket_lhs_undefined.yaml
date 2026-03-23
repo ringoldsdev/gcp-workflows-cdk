@@ -1,0 +1,7 @@
+# Bracket-notation LHS referencing an undefined variable
+- init:
+    assign:
+      - my_map: {}
+- update:
+    assign:
+      - my_map[undefined_key]: "value"

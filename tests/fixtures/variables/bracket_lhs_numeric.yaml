@@ -1,0 +1,11 @@
+# Bracket-notation LHS with numeric index (no variable reference)
+- init:
+    assign:
+      - items:
+          - "a"
+          - "b"
+          - "c"
+- update:
+    assign:
+      - items[0]: "new_a"
+      - items[1]: "new_b"

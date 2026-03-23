@@ -1,0 +1,8 @@
+# Multiple bracket-notation issues in one step
+- init:
+    assign:
+      - my_map: {}
+- update:
+    assign:
+      - my_map[undef_a]: "value1"
+      - my_map[undef_b]: "value2"

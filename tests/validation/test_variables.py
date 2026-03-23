@@ -12,6 +12,7 @@ from cloud_workflows.variables import (
     Certainty,
     Severity,
     analyze_variables,
+    _extract_lhs_bracket_exprs,
 )
 
 
@@ -159,6 +160,24 @@ class TestValidVariables:
         issues = analyze_variables(wf)
         assert issues == []
 
+    def test_bracket_lhs_defined_vars(self):
+        """Bracket subscript variables on assign LHS are validated as defined."""
+        wf = parse_fixture("variables", "bracket_lhs_valid.yaml")
+        issues = analyze_variables(wf)
+        assert issues == []
+
+    def test_bracket_lhs_string_literal_no_issues(self):
+        """String literals in bracket subscripts produce no variable issues."""
+        wf = parse_fixture("variables", "bracket_lhs_literal.yaml")
+        issues = analyze_variables(wf)
+        assert issues == []
+
+    def test_bracket_lhs_numeric_index_no_issues(self):
+        """Numeric subscripts like items[0] produce no variable issues."""
+        wf = parse_fixture("variables", "bracket_lhs_numeric.yaml")
+        issues = analyze_variables(wf)
+        assert issues == []
+
 
 # =============================================================================
 # Undefined variable references (errors expected)
@@ -198,6 +217,34 @@ class TestUndefinedVariables:
         assert len(errors) == 1
         assert errors[0].variable == "e"
         assert errors[0].step_name == "after_try"
+
+    def test_bracket_lhs_undefined_variable(self):
+        """Bracket subscript referencing an undefined variable produces an error."""
+        wf = parse_fixture("variables", "bracket_lhs_undefined.yaml")
+        issues = analyze_variables(wf)
+        errors = [i for i in issues if i.severity == Severity.ERROR]
+        assert len(errors) == 1
+        assert errors[0].variable == "undefined_key"
+        assert errors[0].step_name == "update"
+        assert "not defined" in errors[0].message
+
+    def test_bracket_lhs_expr_undefined_variable(self):
+        """Expression in bracket subscript with one undefined variable."""
+        wf = parse_fixture("variables", "bracket_lhs_expr_undefined.yaml")
+        issues = analyze_variables(wf)
+        errors = [i for i in issues if i.severity == Severity.ERROR]
+        assert len(errors) == 1
+        assert errors[0].variable == "suffix"
+        assert errors[0].step_name == "update"
+
+    def test_bracket_lhs_multiple_undefined(self):
+        """Multiple bracket subscripts with undefined variables each produce errors."""
+        wf = parse_fixture("variables", "bracket_lhs_multi_undefined.yaml")
+        issues = analyze_variables(wf)
+        errors = [i for i in issues if i.severity == Severity.ERROR]
+        assert len(errors) == 2
+        error_vars = {e.variable for e in errors}
+        assert error_vars == {"undef_a", "undef_b"}
 
 
 # =============================================================================
@@ -244,3 +291,42 @@ class TestVariableIssue:
         # processes both workflows without error
         issues = analyze_variables(wf)
         assert issues == []
+
+
+# =============================================================================
+# Bracket expression extraction (unit tests)
+# =============================================================================
+
+
+class TestExtractLhsBracketExprs:
+    """Tests for _extract_lhs_bracket_exprs helper."""
+
+    def test_no_brackets(self):
+        assert _extract_lhs_bracket_exprs("x") == []
+        assert _extract_lhs_bracket_exprs("config.key") == []
+
+    def test_simple_variable(self):
+        assert _extract_lhs_bracket_exprs("my_map[key_var]") == ["key_var"]
+
+    def test_string_literal(self):
+        assert _extract_lhs_bracket_exprs('my_map["Key1"]') == ['"Key1"']
+
+    def test_single_quoted_literal(self):
+        assert _extract_lhs_bracket_exprs("my_map['Key1']") == ["'Key1'"]
+
+    def test_numeric_index(self):
+        assert _extract_lhs_bracket_exprs("items[0]") == ["0"]
+
+    def test_expression(self):
+        assert _extract_lhs_bracket_exprs('my_map[a + "b"]') == ['a + "b"']
+
+    def test_multiple_brackets(self):
+        result = _extract_lhs_bracket_exprs('a[x]["k"][y]')
+        assert result == ["x", '"k"', "y"]
+
+    def test_dot_then_bracket(self):
+        assert _extract_lhs_bracket_exprs("obj.field[idx]") == ["idx"]
+
+    def test_empty_brackets(self):
+        """Empty brackets should return an empty string."""
+        assert _extract_lhs_bracket_exprs("a[]") == [""]

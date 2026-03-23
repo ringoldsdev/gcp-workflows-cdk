@@ -227,11 +227,18 @@ class VariableAnalyzer:
         step_name: str,
         workflow_name: str,
     ) -> None:
-        """Process an assign step: check RHS refs, then define LHS variables."""
+        """Process an assign step: check RHS refs, then define LHS variables.
+
+        For LHS keys containing bracket notation (e.g. ``my_map[key_var]``),
+        the expressions inside the brackets are also validated against the
+        current scope.
+        """
         for entry in assign.assign:
             for lhs, rhs in entry.items():
                 # Check references in the RHS value
                 self._check_value_refs(rhs, scope, step_name, workflow_name)
+                # Check variable references inside bracket subscripts on the LHS
+                self._check_lhs_bracket_refs(lhs, scope, step_name, workflow_name)
                 # Define the variable (use root name -- before any dots/brackets)
                 var_name = _root_var_name(lhs)
                 scope.define(
@@ -287,6 +294,9 @@ class VariableAnalyzer:
                 for entry in cond.assign:
                     for lhs, rhs in entry.items():
                         self._check_value_refs(rhs, scope, step_name, workflow_name)
+                        self._check_lhs_bracket_refs(
+                            lhs, scope, step_name, workflow_name
+                        )
                         branch_defined.add(_root_var_name(lhs))
 
             if cond.steps:
@@ -456,6 +466,51 @@ class VariableAnalyzer:
                         )
                     )
 
+    def _check_lhs_bracket_refs(
+        self,
+        lhs: str,
+        scope: Scope,
+        step_name: str,
+        workflow_name: str,
+    ) -> None:
+        """Check variable references inside bracket subscripts on an assign LHS.
+
+        In GCP Workflows, LHS keys like ``my_map[key_var]`` contain bare
+        expressions inside the brackets (no ``${}`` wrapping).  This method
+        extracts those expressions and validates that any referenced
+        variables are defined in the current scope.
+        """
+        bracket_exprs = _extract_lhs_bracket_exprs(lhs)
+        for expr_body in bracket_exprs:
+            refs = extract_variable_references(expr_body)
+            for ref in refs:
+                if ref in self._subworkflow_names:
+                    continue
+                defn = scope.lookup(ref)
+                if defn is None:
+                    self.issues.append(
+                        VariableIssue(
+                            severity=Severity.ERROR,
+                            message=(f"Variable '{ref}' is referenced but not defined"),
+                            variable=ref,
+                            step_name=step_name,
+                            workflow_name=workflow_name,
+                        )
+                    )
+                elif defn.certainty == Certainty.MAYBE:
+                    self.issues.append(
+                        VariableIssue(
+                            severity=Severity.WARNING,
+                            message=(
+                                f"Variable '{ref}' may not be defined "
+                                f"(conditionally defined in step '{defn.step_name}')"
+                            ),
+                            variable=ref,
+                            step_name=step_name,
+                            workflow_name=workflow_name,
+                        )
+                    )
+
 
 # =============================================================================
 # Helpers
@@ -476,6 +531,59 @@ def _root_var_name(lhs: str) -> str:
         if ch in (".", "["):
             return lhs[:i]
     return lhs
+
+
+def _extract_lhs_bracket_exprs(lhs: str) -> List[str]:
+    """Extract expression bodies from bracket subscripts in an assign LHS.
+
+    GCP Workflows allows bracket notation on the LHS of assign steps for
+    dynamic map keys.  The content inside ``[...]`` is a bare expression
+    (no ``${}`` wrapping) that may reference variables.
+
+    Examples::
+
+        "my_map[key_var]"          -> ["key_var"]
+        'my_map["literal"]'        -> ['"literal"']
+        'my_map[a + "b"]'          -> ['a + "b"']
+        "items[0]"                 -> ["0"]
+        "x"                        -> []
+        "config.key"               -> []
+        'a[x]["k"][y]'             -> ["x", '"k"', "y"]
+
+    The returned strings are raw expression bodies suitable for passing
+    to ``extract_variable_references()``.
+    """
+    exprs: List[str] = []
+    i = 0
+    while i < len(lhs):
+        if lhs[i] == "[":
+            # Find the matching closing bracket, respecting string literals
+            depth = 1
+            start = i + 1
+            j = start
+            while j < len(lhs) and depth > 0:
+                ch = lhs[j]
+                if ch in ('"', "'"):
+                    # Skip over string literal
+                    quote = ch
+                    j += 1
+                    while j < len(lhs) and lhs[j] != quote:
+                        if lhs[j] == "\\":
+                            j += 1  # skip escaped char
+                        j += 1
+                    # j now points to closing quote (or end of string)
+                elif ch == "[":
+                    depth += 1
+                elif ch == "]":
+                    depth -= 1
+                j += 1
+            # j is one past the closing ']'
+            if depth == 0:
+                exprs.append(lhs[start : j - 1])
+            i = j
+        else:
+            i += 1
+    return exprs
 
 
 # =============================================================================

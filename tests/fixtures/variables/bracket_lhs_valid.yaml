@@ -1,0 +1,10 @@
+# Bracket-notation LHS with all referenced variables defined
+- init:
+    assign:
+      - my_map: {}
+      - key_var: "key1"
+      - idx: 0
+- update:
+    assign:
+      - my_map[key_var]: "value1"
+      - my_map[idx]: "value2"
