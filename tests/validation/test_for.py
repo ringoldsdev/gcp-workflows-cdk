@@ -11,9 +11,9 @@ def test_for_list():
     step = wf.steps[1]
     body = step.body
     assert isinstance(body, ForStep)
-    for_body = body.for_
+    for_body = body.for_body
     assert for_body.value == "item"
-    assert for_body.in_ == "${items}"
+    assert for_body.in_value == "${items}"
     assert for_body.range is None
     assert for_body.index is None
     assert len(for_body.steps) == 1
@@ -25,10 +25,10 @@ def test_for_range():
     step = wf.steps[1]
     body = step.body
     assert isinstance(body, ForStep)
-    for_body = body.for_
+    for_body = body.for_body
     assert for_body.value == "i"
     assert for_body.range == [1, 10]
-    assert for_body.in_ is None
+    assert for_body.in_value is None
     assert for_body.index is None
     assert len(for_body.steps) == 1
 
@@ -39,10 +39,10 @@ def test_for_index():
     step = wf.steps[0]
     body = step.body
     assert isinstance(body, ForStep)
-    for_body = body.for_
+    for_body = body.for_body
     assert for_body.value == "item"
     assert for_body.index == "idx"
-    assert for_body.in_ == ["a", "b", "c"]
+    assert for_body.in_value == ["a", "b", "c"]
     assert for_body.range is None
 
 
@@ -70,7 +70,7 @@ def test_for_break_continue():
     step = wf.steps[1]
     body = step.body
     assert isinstance(body, ForStep)
-    for_body = body.for_
+    for_body = body.for_body
     assert for_body.value == "item"
-    assert for_body.in_ == [1, None, 3, "STOP", 5]
+    assert for_body.in_value == [1, None, 3, "STOP", 5]
     assert len(for_body.steps) == 2

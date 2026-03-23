@@ -385,25 +385,25 @@ All models use `model_dump(by_alias=True, exclude_none=True)` for serialization.
 |---|---|---|
 | `AssignStep(assign: list[dict])` | `assign` | `next` |
 | `CallStep(call: str)` | `call` | `args`, `result`, `next` |
-| `ReturnStep(return_: Any)` | `return` | — |
-| `RaiseStep(raise_: Any)` | `raise` | — |
+| `ReturnStep(return_value: Any)` | `return` | — |
+| `RaiseStep(raise_value: Any)` | `raise` | — |
 | `SwitchStep(switch: list[SwitchCondition])` | `switch` | `next` (fallthrough) |
-| `ForStep(for_: ForBody)` | `for` | — |
+| `ForStep(for_body: ForBody)` | `for` | — |
 | `ParallelStep(parallel: ParallelBody)` | `parallel` | — |
-| `TryStep(try_: TryBody)` | `try` | `retry`, `except_` |
+| `TryStep(try_body: TryBody)` | `try` | `retry`, `except_body` |
 | `NestedStepsStep(steps: list[Step])` | `steps` | `next` |
 
 ### Supporting Models
 
 | Model | Fields |
 |---|---|
-| `SwitchCondition` | `condition`, `next?`, `steps?`, `assign?`, `return_?`, `raise_?` |
-| `ForBody` | `value`, `in_?` (mutually exclusive with `range`), `range?`, `index?`, `steps` |
-| `ParallelBody` | `branches?` (mutually exclusive with `for_`), `for_?`, `shared?`, `exception_policy?`, `concurrency_limit?` |
+| `SwitchCondition` | `condition`, `next?`, `steps?`, `assign?`, `return_value?`, `raise_value?` |
+| `ForBody` | `value`, `in_value?` (mutually exclusive with `range`), `range?`, `index?`, `steps` |
+| `ParallelBody` | `branches?` (mutually exclusive with `for_body`), `for_body?`, `shared?`, `exception_policy?`, `concurrency_limit?` |
 | `Branch(name, steps)` | Single-key dict serialization |
 | `TryCallBody(call, args?, result?)` | Try body form A |
 | `TryStepsBody(steps)` | Try body form B |
-| `ExceptBody(as_, steps)` | Except handler |
+| `ExceptBody(as_value, steps)` | Except handler |
 | `RetryConfig(predicate, max_retries, backoff?)` | Custom retry configuration |
 | `BackoffConfig(initial_delay, max_delay, multiplier)` | Exponential backoff settings |
 
@@ -412,22 +412,22 @@ All models use `model_dump(by_alias=True, exclude_none=True)` for serialization.
 - `AssignStep.assign`: 1-50 entries, each must be a single-key dict
 - `SwitchStep.switch`: 1-50 conditions
 - `ParallelBody.branches`: 2-10 branches
-- `ForBody`: exactly one of `in_` or `range` must be set
-- `ParallelBody`: exactly one of `branches` or `for_` must be set
+- `ForBody`: exactly one of `in_value` or `range` must be set
+- `ParallelBody`: exactly one of `branches` or `for_body` must be set
 
 ### Field Aliases
 
-Python reserved words use trailing underscores as field names. Pydantic aliases handle YAML serialization:
+Python reserved words use descriptive suffixes as field names. Pydantic aliases handle YAML serialization:
 
 | Field | Alias |
 |---|---|
-| `return_` | `return` |
-| `raise_` | `raise` |
-| `for_` | `for` |
-| `in_` | `in` |
-| `as_` | `as` |
-| `except_` | `except` |
-| `try_` | `try` |
+| `return_value` | `return` |
+| `raise_value` | `raise` |
+| `for_body` | `for` |
+| `in_value` | `in` |
+| `as_value` | `as` |
+| `except_body` | `except` |
+| `try_body` | `try` |
 
 ---
 

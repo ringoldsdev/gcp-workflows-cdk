@@ -102,7 +102,7 @@ class TestSimpleAssign:
         return SimpleWorkflow(
             steps=[
                 Step(name="init", body=AssignStep(assign=[{"x": 10}, {"y": 20}])),
-                Step(name="done", body=ReturnStep(return_=expr("x + y"))),
+                Step(name="done", body=ReturnStep(return_value=expr("x + y"))),
             ]
         )
 
@@ -139,7 +139,7 @@ class TestSubworkflows:
                                 call="helper", args={"input": "test"}, result="res"
                             ),
                         ),
-                        Step(name="done", body=ReturnStep(return_=expr("res"))),
+                        Step(name="done", body=ReturnStep(return_value=expr("res"))),
                     ]
                 ),
                 "helper": WorkflowDefinition(
@@ -149,7 +149,7 @@ class TestSubworkflows:
                             name="log",
                             body=CallStep(call="sys.log", args={"text": expr("input")}),
                         ),
-                        Step(name="done", body=ReturnStep(return_="ok")),
+                        Step(name="done", body=ReturnStep(return_value="ok")),
                     ],
                 ),
             }
@@ -183,9 +183,9 @@ class TestForLoop:
                 Step(
                     name="loop",
                     body=ForStep(
-                        for_=ForBody(
+                        for_body=ForBody(
                             value="item",
-                            in_=["a", "b", "c"],
+                            in_value=["a", "b", "c"],
                             steps=[
                                 Step(
                                     name="log",
@@ -210,8 +210,8 @@ class TestForLoop:
     def test_model_structure(self, workflow):
         step = workflow.steps[0]
         assert isinstance(step.body, ForStep)
-        assert step.body.for_.value == "item"
-        assert step.body.for_.in_ == ["a", "b", "c"]
+        assert step.body.for_body.value == "item"
+        assert step.body.for_body.in_value == ["a", "b", "c"]
 
 
 # =============================================================================
@@ -236,8 +236,8 @@ class TestSwitch:
                         ]
                     ),
                 ),
-                Step(name="positive", body=ReturnStep(return_="positive")),
-                Step(name="negative", body=ReturnStep(return_="negative")),
+                Step(name="positive", body=ReturnStep(return_value="positive")),
+                Step(name="negative", body=ReturnStep(return_value="negative")),
             ]
         )
 
@@ -318,7 +318,7 @@ class TestTryExceptRetry:
                 Step(
                     name="try_call",
                     body=TryStep(
-                        try_=TryCallBody(
+                        try_body=TryCallBody(
                             call="http.get",
                             args={"url": "https://example.com"},
                             result="response",
@@ -330,12 +330,12 @@ class TestTryExceptRetry:
                                 initial_delay=1, max_delay=30, multiplier=2
                             ),
                         ),
-                        except_=ExceptBody(
-                            as_="e",
+                        except_body=ExceptBody(
+                            as_value="e",
                             steps=[
                                 Step(
                                     name="handle",
-                                    body=RaiseStep(raise_=expr("e")),
+                                    body=RaiseStep(raise_value=expr("e")),
                                 ),
                             ],
                         ),
@@ -379,7 +379,7 @@ class TestNestedSteps:
                         next="done",
                     ),
                 ),
-                Step(name="done", body=ReturnStep(return_="ok")),
+                Step(name="done", body=ReturnStep(return_value="ok")),
             ]
         )
 
@@ -401,7 +401,7 @@ class TestToYamlHelper:
     def test_simple_workflow(self):
         w = SimpleWorkflow(
             steps=[
-                Step(name="done", body=ReturnStep(return_="ok")),
+                Step(name="done", body=ReturnStep(return_value="ok")),
             ]
         )
         result = to_yaml(w)
@@ -414,7 +414,7 @@ class TestToYamlHelper:
             workflows={
                 "main": WorkflowDefinition(
                     steps=[
-                        Step(name="done", body=ReturnStep(return_="ok")),
+                        Step(name="done", body=ReturnStep(return_value="ok")),
                     ]
                 ),
             }
@@ -450,7 +450,7 @@ class TestExprHelper:
         w = SimpleWorkflow(
             steps=[
                 Step(name="init", body=AssignStep(assign=[{"x": 10}])),
-                Step(name="done", body=ReturnStep(return_=expr("x"))),
+                Step(name="done", body=ReturnStep(return_value=expr("x"))),
             ]
         )
         result = w.to_dict()
@@ -485,7 +485,7 @@ class TestTryWithStepsBody:
                 Step(
                     name="try_steps",
                     body=TryStep(
-                        try_=TryStepsBody(
+                        try_body=TryStepsBody(
                             steps=[
                                 Step(
                                     name="step1",
@@ -501,10 +501,12 @@ class TestTryWithStepsBody:
                                 ),
                             ]
                         ),
-                        except_=ExceptBody(
-                            as_="e",
+                        except_body=ExceptBody(
+                            as_value="e",
                             steps=[
-                                Step(name="handle", body=ReturnStep(return_="error")),
+                                Step(
+                                    name="handle", body=ReturnStep(return_value="error")
+                                ),
                             ],
                         ),
                     ),
@@ -544,8 +546,8 @@ class TestCdkEdgeCases:
                         next="final",
                     ),
                 ),
-                Step(name="skipped", body=ReturnStep(return_="skipped")),
-                Step(name="final", body=ReturnStep(return_="done")),
+                Step(name="skipped", body=ReturnStep(return_value="skipped")),
+                Step(name="final", body=ReturnStep(return_value="done")),
             ]
         )
         result = w.to_dict()
@@ -562,8 +564,8 @@ class TestCdkEdgeCases:
                         next="final",
                     ),
                 ),
-                Step(name="skipped", body=ReturnStep(return_="skipped")),
-                Step(name="final", body=ReturnStep(return_="done")),
+                Step(name="skipped", body=ReturnStep(return_value="skipped")),
+                Step(name="final", body=ReturnStep(return_value="done")),
             ]
         )
         assert_passes_analysis(w)
@@ -577,8 +579,8 @@ class TestCdkEdgeCases:
                     name="init",
                     body=AssignStep(assign=[{"x": 1}], next="end"),
                 ),
-                Step(name="skipped", body=ReturnStep(return_="skipped")),
-                Step(name="end", body=ReturnStep(return_=expr("x"))),
+                Step(name="skipped", body=ReturnStep(return_value="skipped")),
+                Step(name="end", body=ReturnStep(return_value=expr("x"))),
             ]
         )
         result = w.to_dict()
@@ -591,8 +593,8 @@ class TestCdkEdgeCases:
                     name="init",
                     body=AssignStep(assign=[{"x": 1}], next="end"),
                 ),
-                Step(name="skipped", body=ReturnStep(return_="skipped")),
-                Step(name="end", body=ReturnStep(return_=expr("x"))),
+                Step(name="skipped", body=ReturnStep(return_value="skipped")),
+                Step(name="end", body=ReturnStep(return_value=expr("x"))),
             ]
         )
         assert_passes_analysis(w)
@@ -605,7 +607,7 @@ class TestCdkEdgeCases:
                 Step(
                     name="count",
                     body=ForStep(
-                        for_=ForBody(
+                        for_body=ForBody(
                             value="i",
                             range=[1, 10],
                             steps=[
@@ -632,7 +634,7 @@ class TestCdkEdgeCases:
                 Step(
                     name="count",
                     body=ForStep(
-                        for_=ForBody(
+                        for_body=ForBody(
                             value="i",
                             range=[1, 10],
                             steps=[
@@ -660,9 +662,9 @@ class TestCdkEdgeCases:
                     body=ParallelStep(
                         parallel=ParallelBody(
                             shared=["results"],
-                            for_=ForBody(
+                            for_body=ForBody(
                                 value="item",
-                                in_=["a", "b", "c"],
+                                in_value=["a", "b", "c"],
                                 steps=[
                                     Step(
                                         name="process",
@@ -692,9 +694,9 @@ class TestCdkEdgeCases:
                     body=ParallelStep(
                         parallel=ParallelBody(
                             shared=["results"],
-                            for_=ForBody(
+                            for_body=ForBody(
                                 value="item",
-                                in_=["a", "b", "c"],
+                                in_value=["a", "b", "c"],
                                 steps=[
                                     Step(
                                         name="process",
@@ -723,9 +725,11 @@ class TestCdkEdgeCases:
                     body=SwitchStep(
                         switch=[
                             SwitchCondition(
-                                condition=expr("x > 0"), return_="positive"
+                                condition=expr("x > 0"), return_value="positive"
                             ),
-                            SwitchCondition(condition=True, return_="non-positive"),
+                            SwitchCondition(
+                                condition=True, return_value="non-positive"
+                            ),
                         ]
                     ),
                 ),
@@ -745,9 +749,11 @@ class TestCdkEdgeCases:
                     body=SwitchStep(
                         switch=[
                             SwitchCondition(
-                                condition=expr("x > 0"), return_="positive"
+                                condition=expr("x > 0"), return_value="positive"
                             ),
-                            SwitchCondition(condition=True, return_="non-positive"),
+                            SwitchCondition(
+                                condition=True, return_value="non-positive"
+                            ),
                         ]
                     ),
                 ),
@@ -760,7 +766,7 @@ class TestCdkEdgeCases:
     def test_raise_serialized(self):
         w = SimpleWorkflow(
             steps=[
-                Step(name="fail", body=RaiseStep(raise_="Something went wrong")),
+                Step(name="fail", body=RaiseStep(raise_value="Something went wrong")),
             ]
         )
         result = w.to_dict()
@@ -769,7 +775,7 @@ class TestCdkEdgeCases:
     def test_raise_with_expression(self):
         w = SimpleWorkflow(
             steps=[
-                Step(name="fail", body=RaiseStep(raise_=expr("error_msg"))),
+                Step(name="fail", body=RaiseStep(raise_value=expr("error_msg"))),
             ]
         )
         result = w.to_dict()
@@ -794,13 +800,13 @@ class TestWorkflowDefinitionParams:
                             name="call_sub",
                             body=CallStep(call="my_sub", result="res"),
                         ),
-                        Step(name="done", body=ReturnStep(return_=expr("res"))),
+                        Step(name="done", body=ReturnStep(return_value=expr("res"))),
                     ]
                 ),
                 "my_sub": WorkflowDefinition(
                     params=["required_param", {"optional_param": "default_val"}],
                     steps=[
-                        Step(name="done", body=ReturnStep(return_="ok")),
+                        Step(name="done", body=ReturnStep(return_value="ok")),
                     ],
                 ),
             }

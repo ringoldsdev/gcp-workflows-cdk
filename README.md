@@ -381,7 +381,7 @@ workflow = SimpleWorkflow(steps=[
         call="sys.log",
         args={"text": expr("greeting")},
     )),
-    Step(name="done", body=ReturnStep(return_=expr("greeting"))),
+    Step(name="done", body=ReturnStep(return_value=expr("greeting"))),
 ])
 
 yaml_str = to_yaml(workflow)           # serialize to YAML string
@@ -390,17 +390,17 @@ roundtrip = parse_workflow(yaml_str)   # parse back to model
 
 ### Aliases for Python Reserved Words
 
-Pydantic field names use trailing underscores for Python reserved words. Serialization emits the correct YAML keys automatically:
+Pydantic field names avoid Python reserved words by using descriptive suffixes. Serialization emits the correct YAML keys automatically via aliases:
 
 | Python field | YAML key |
 |---|---|
-| `return_` | `return` |
-| `raise_` | `raise` |
-| `for_` | `for` |
-| `in_` | `in` |
-| `as_` | `as` |
-| `except_` | `except` |
-| `try_` | `try` |
+| `return_value` | `return` |
+| `raise_value` | `raise` |
+| `for_body` | `for` |
+| `in_value` | `in` |
+| `as_value` | `as` |
+| `except_body` | `except` |
+| `try_body` | `try` |
 
 ### Model Construction Examples
 
@@ -408,13 +408,13 @@ Pydantic field names use trailing underscores for Python reserved words. Seriali
 # Switch with embedded actions
 SwitchStep(switch=[
     SwitchCondition(condition=expr("x > 0"), next="positive"),
-    SwitchCondition(condition=expr("x == 0"), return_="zero"),
+    SwitchCondition(condition=expr("x == 0"), return_value="zero"),
     SwitchCondition(condition=True, next="negative"),
 ])
 
 # For loop
-ForStep(for_=ForBody(
-    value="item", in_=["a", "b", "c"],
+ForStep(for_body=ForBody(
+    value="item", in_value=["a", "b", "c"],
     steps=[Step(name="log", body=CallStep(call="sys.log", args={"text": expr("item")}))],
 ))
 
@@ -426,14 +426,14 @@ ParallelStep(parallel=ParallelBody(branches=[
 
 # Try/except/retry
 TryStep(
-    try_=TryCallBody(call="http.get", args={"url": "https://example.com"}, result="resp"),
+    try_body=TryCallBody(call="http.get", args={"url": "https://example.com"}, result="resp"),
     retry=RetryConfig(
         predicate=expr("http.default_retry_predicate"),
         max_retries=3,
         backoff=BackoffConfig(initial_delay=1, max_delay=60, multiplier=2),
     ),
-    except_=ExceptBody(as_="e", steps=[
-        Step(name="handle", body=RaiseStep(raise_=expr("e"))),
+    except_body=ExceptBody(as_value="e", steps=[
+        Step(name="handle", body=RaiseStep(raise_value=expr("e"))),
     ]),
 )
 ```

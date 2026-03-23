@@ -249,7 +249,7 @@ class Return(StepType):
         self._value = value
 
     def build(self, step_id: str) -> Dict[str, Any]:
-        model = ReturnStep(return_=self._value)
+        model = ReturnStep(return_value=self._value)
         body = model.model_dump(by_alias=True, exclude_none=True)
         return {step_id: body}
 
@@ -278,7 +278,7 @@ class Raise(StepType):
         self._value = value
 
     def build(self, step_id: str) -> Dict[str, Any]:
-        model = RaiseStep(raise_=self._value)
+        model = RaiseStep(raise_value=self._value)
         body = model.model_dump(by_alias=True, exclude_none=True)
         return {step_id: body}
 
@@ -335,10 +335,10 @@ class Condition:
         if self.assign is not None:
             kwargs["assign"] = self.assign
         if self.returns is not _UNSET:
-            # SwitchCondition uses alias "return" for field return_
+            # SwitchCondition uses alias "return" for field return_value
             kwargs["return"] = self.returns
         if self.raises is not _UNSET:
-            # SwitchCondition uses alias "raise" for field raise_
+            # SwitchCondition uses alias "raise" for field raise_value
             kwargs["raise"] = self.raises
         return SwitchCondition(**kwargs)
 
@@ -429,10 +429,10 @@ class For(StepType):
     def build(self, step_id: str) -> Dict[str, Any]:
         step_dicts = _resolve_steps(self._steps)
         model = ForStep(
-            for_=ForBody(
+            for_body=ForBody(
                 value=self._value,
                 index=self._index,
-                in_=self._items,
+                in_value=self._items,
                 range=self._range,
                 steps=step_dicts,
             )
@@ -558,7 +558,7 @@ class Try(StepType):
         # Resolve except
         except_body = self._build_except()
 
-        model = TryStep(try_=try_body, retry=retry, except_=except_body)
+        model = TryStep(try_body=try_body, retry=retry, except_body=except_body)
         body = model.model_dump(by_alias=True, exclude_none=True)
         return {step_id: body}
 
@@ -582,7 +582,7 @@ class Try(StepType):
         if self._error_steps is None:
             return None
         step_dicts = _resolve_steps(self._error_steps)
-        return ExceptBody(as_="e", steps=step_dicts)
+        return ExceptBody(as_value="e", steps=step_dicts)
 
 
 # ============================================================================

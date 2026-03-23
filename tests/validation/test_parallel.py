@@ -20,7 +20,7 @@ def test_parallel_for():
     parallel_body = wf.steps[1].body
     assert isinstance(parallel_body, ParallelStep)
     assert parallel_body.parallel.shared == ["total"]
-    assert parallel_body.parallel.for_.value == "item"
+    assert parallel_body.parallel.for_body.value == "item"
 
 
 def test_parallel_exception_policy():
@@ -36,7 +36,7 @@ def test_parallel_concurrency():
     parallel_body = wf.steps[0].body
     assert isinstance(parallel_body, ParallelStep)
     assert parallel_body.parallel.concurrency_limit == 3
-    assert parallel_body.parallel.for_.value == "i"
+    assert parallel_body.parallel.for_body.value == "i"
 
 
 def test_parallel_1_branch():

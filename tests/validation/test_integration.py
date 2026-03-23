@@ -20,21 +20,21 @@ def test_full_workflow():
     assert main.steps[3].name == "done"
 
     # Verify the for loop step
-    for_body = main.steps[2].body.for_
+    for_body = main.steps[2].body.for_body
     assert for_body.value == "item"
     assert len(for_body.steps) == 2
 
     # Verify try/retry/except inside for loop
     try_step = for_body.steps[0].body
-    assert try_step.try_.call == "http.get"
+    assert try_step.try_body.call == "http.get"
     assert try_step.retry == "${http.default_retry}"
-    assert try_step.except_ is not None
-    assert try_step.except_.as_ == "e"
-    assert len(try_step.except_.steps) == 2
+    assert try_step.except_body is not None
+    assert try_step.except_body.as_value == "e"
+    assert len(try_step.except_body.steps) == 2
 
     # Verify final return is a map
     done_body = main.steps[3].body
-    assert isinstance(done_body.return_, dict)
+    assert isinstance(done_body.return_value, dict)
 
 
 def test_parallel_with_try():
@@ -60,14 +60,14 @@ def test_parallel_with_try():
 
     # Verify try/except in branch A (has retry)
     try_a = branch_a.steps[0].body
-    assert try_a.try_.call == "http.get"
+    assert try_a.try_body.call == "http.get"
     assert try_a.retry == "${http.default_retry}"
-    assert try_a.except_ is not None
-    assert try_a.except_.as_ == "e"
+    assert try_a.except_body is not None
+    assert try_a.except_body.as_value == "e"
 
     # Verify try/except in branch B (no retry)
     try_b = branch_b.steps[0].body
-    assert try_b.try_.call == "http.get"
+    assert try_b.try_body.call == "http.get"
     assert try_b.retry is None
-    assert try_b.except_ is not None
-    assert try_b.except_.as_ == "e"
+    assert try_b.except_body is not None
+    assert try_b.except_body.as_value == "e"
