@@ -25,20 +25,17 @@ from cloud_workflows import (
     Backoff,
     expr,
 )
-from cloud_workflows.models import SimpleWorkflow
 from conftest import load_fixture
 
 
 # =============================================================================
-# Helper: build Steps into a SimpleWorkflow for comparison
+# Helper: build Steps into a list of step dicts
 # =============================================================================
 
 
 def _to_dict(s: Steps) -> list:
-    """Finalize Steps into a SimpleWorkflow and serialize to dict."""
-    w = s._finalize()
-    assert isinstance(w, SimpleWorkflow)
-    return w.to_dict()
+    """Build Steps into a list of step dicts."""
+    return s.build()
 
 
 # =============================================================================

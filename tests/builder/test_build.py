@@ -16,7 +16,6 @@ from cloud_workflows import (
     build,
     expr,
 )
-from cloud_workflows.models import SimpleWorkflow, SubworkflowsWorkflow
 from conftest import load_fixture
 
 
@@ -177,16 +176,17 @@ class TestBuildYamlContent:
     def test_round_trip_through_build(self, tmp_path):
         """Build to file, read back, parse — should match original."""
         from cloud_workflows.models import parse_workflow
+        from cloud_workflows.builder import _finalize
 
         s = Steps()
         s.step("init", Assign(x=42))
         s.step("done", Return(expr("x")))
-        w1 = s._finalize()
+        w1 = _finalize({"main": s})
 
         build({"rt.yaml": {"main": s}}, output_dir=tmp_path)
 
         w2 = parse_workflow((tmp_path / "rt.yaml").read_text(encoding="utf-8"))
-        assert w1.to_dict() == w2.to_dict()
+        assert w1 == w2.to_dict()
 
 
 # =============================================================================

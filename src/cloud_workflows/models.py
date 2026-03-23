@@ -656,6 +656,37 @@ def to_yaml(workflow: Workflow) -> str:
     )
 
 
+def validate_workflow(data: Any) -> Workflow:
+    """Validate a raw workflow structure through Pydantic (Layer 3 entry point).
+
+    Accepts the raw data produced by the builder layer:
+    - A ``list`` of step dicts → validates as ``SimpleWorkflow``
+    - A ``dict`` of workflow definitions → validates as ``SubworkflowsWorkflow``
+
+    This is the single public entry point for structural validation.
+    Expression and variable validation are separate concerns handled by
+    ``analyze_yaml()`` / ``analyze_workflow()``.
+
+    Args:
+        data: Raw workflow data — either a list (simple) or dict (subworkflows).
+
+    Returns:
+        A validated ``SimpleWorkflow`` or ``SubworkflowsWorkflow``.
+
+    Raises:
+        ValidationError: If the data does not conform to the workflow schema.
+        ValueError: If the data type is not list or dict.
+    """
+    if isinstance(data, list):
+        return SimpleWorkflow.model_validate(data)
+    elif isinstance(data, dict):
+        return SubworkflowsWorkflow.model_validate(data)
+    else:
+        raise ValueError(
+            f"Workflow data must be a list or dict, got {type(data).__name__}"
+        )
+
+
 # =============================================================================
 # 25. Forward reference rebuilds
 # =============================================================================

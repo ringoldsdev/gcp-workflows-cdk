@@ -30,21 +30,19 @@ from cloud_workflows.models import (
     CallStep,
     ReturnStep,
     RaiseStep,
-    SimpleWorkflow,
 )
+from cloud_workflows.builder import _finalize
 from conftest import load_fixture
 
 
 # =============================================================================
-# Helper: build Steps into a SimpleWorkflow for comparison
+# Helper: build Steps into a list of step dicts
 # =============================================================================
 
 
 def _to_dict(s: Steps) -> list:
-    """Finalize Steps into a SimpleWorkflow and serialize to dict."""
-    w = s._finalize()
-    assert isinstance(w, SimpleWorkflow)
-    return w.to_dict()
+    """Build Steps into a list of step dicts."""
+    return s.build()
 
 
 # =============================================================================
@@ -988,13 +986,11 @@ class TestValidation:
         s = Steps()
         s.step("init", Assign(x=10, y=20))
         s.step("done", Return(expr("x + y")))
-        w = s._finalize()
+        w = _finalize({"main": s})
         result = analyze_workflow(w)
         assert result.is_valid
 
     def test_subworkflows_validate(self):
-        from cloud_workflows.builder import _finalize
-
         main = Steps()
         main.step(
             "call_helper",
@@ -1068,8 +1064,8 @@ class TestErrors:
 
     def test_finalize_empty_raises(self):
         s = Steps()
-        with pytest.raises(ValueError, match="No steps"):
-            s._finalize()
+        with pytest.raises(ValueError, match="no steps"):
+            _finalize({"main": s})
 
     def test_pydantic_validation_in_step(self):
         """Pydantic validation runs eagerly at model construction time."""

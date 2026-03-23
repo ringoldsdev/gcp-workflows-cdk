@@ -1,7 +1,8 @@
 """Tests for Steps finalization and multi-workflow composition.
 
-Steps can be finalized into SimpleWorkflow (no params) or
-SubworkflowsWorkflow (with params or multi-workflow dict).
+_finalize() converts a dict[str, Steps] to raw workflow data:
+- Single "main" without params → list of step dicts (simple workflow)
+- Multiple workflows or main with params → dict of workflow definitions
 """
 
 import pytest
@@ -14,12 +15,8 @@ from cloud_workflows import (
     Return,
     expr,
 )
-from cloud_workflows.builder import _finalize
-from cloud_workflows.models import (
-    SimpleWorkflow,
-    SubworkflowsWorkflow,
-    parse_workflow,
-)
+from cloud_workflows.builder import _finalize, _to_yaml
+from cloud_workflows.models import parse_workflow
 from conftest import load_fixture
 
 
@@ -29,23 +26,23 @@ from conftest import load_fixture
 
 
 class TestSimpleWorkflow:
-    """Single Steps container produces SimpleWorkflow."""
+    """Single Steps container produces a simple workflow (list of step dicts)."""
 
     def test_simple_finalize(self):
         s = Steps()
         s.step("init", Assign(x=10, y=20))
         s.step("done", Return(expr("x + y")))
-        w = s._finalize()
-        assert isinstance(w, SimpleWorkflow)
+        w = _finalize({"main": s})
+        assert isinstance(w, list)
         expected = yaml.safe_load(load_fixture("cdk", "simple_assign.yaml"))
-        assert w.to_dict() == expected
+        assert w == expected
 
     def test_with_params_produces_subworkflows(self):
-        """Steps with params produces SubworkflowsWorkflow even for single workflow."""
+        """Steps with params produces dict even for single workflow."""
         s = Steps(params=["input"])
         s.step("done", Return("ok"))
-        w = s._finalize()
-        assert isinstance(w, SubworkflowsWorkflow)
+        w = _finalize({"main": s})
+        assert isinstance(w, dict)
 
 
 # =============================================================================
@@ -54,7 +51,7 @@ class TestSimpleWorkflow:
 
 
 class TestMultiWorkflow:
-    """Dict of Steps produces SubworkflowsWorkflow."""
+    """Dict of Steps produces subworkflows dict."""
 
     def test_two_workflows(self):
         main = Steps()
@@ -69,16 +66,16 @@ class TestMultiWorkflow:
         helper.step("done", Return("ok"))
 
         w = _finalize({"main": main, "helper": helper})
-        assert isinstance(w, SubworkflowsWorkflow)
+        assert isinstance(w, dict)
         expected = yaml.safe_load(load_fixture("cdk", "subworkflows.yaml"))
-        assert w.to_dict() == expected
+        assert w == expected
 
     def test_single_main_no_params(self):
-        """Single 'main' without params -> SimpleWorkflow."""
+        """Single 'main' without params -> list (simple workflow)."""
         main = Steps()
         main.step("done", Return("ok"))
         w = _finalize({"main": main})
-        assert isinstance(w, SimpleWorkflow)
+        assert isinstance(w, list)
 
     def test_non_main_requires_main_key(self):
         """Dict without 'main' key raises ValueError."""
@@ -100,9 +97,9 @@ class TestRoundTrip:
         s = Steps()
         s.step("init", Assign(x=10))
         s.step("done", Return(expr("x")))
-        w1 = s._finalize()
-        w2 = parse_workflow(w1.to_yaml())
-        assert w1.to_dict() == w2.to_dict()
+        w1 = _finalize({"main": s})
+        w2 = parse_workflow(_to_yaml(w1))
+        assert w1 == w2.to_dict()
 
     def test_multi_workflow_round_trip(self):
         main = Steps()
@@ -113,8 +110,8 @@ class TestRoundTrip:
         helper.step("s1", Return("ok"))
 
         w1 = _finalize({"main": main, "helper": helper})
-        w2 = parse_workflow(w1.to_yaml())
-        assert w1.to_dict() == w2.to_dict()
+        w2 = parse_workflow(_to_yaml(w1))
+        assert w1 == w2.to_dict()
 
 
 # =============================================================================
@@ -127,8 +124,8 @@ class TestErrors:
 
     def test_empty_steps_raises(self):
         s = Steps()
-        with pytest.raises(ValueError, match="No steps"):
-            s._finalize()
+        with pytest.raises(ValueError, match="no steps"):
+            _finalize({"main": s})
 
     def test_empty_workflow_in_dict_raises(self):
         main = Steps()

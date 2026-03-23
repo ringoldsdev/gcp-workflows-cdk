@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Union
+from typing import Any, List, Union
 
 import yaml
 
 from .expressions import ExpressionError, validate_all_expressions
-from .models import SimpleWorkflow, SubworkflowsWorkflow, Workflow, parse_workflow
+from .models import (
+    SimpleWorkflow,
+    SubworkflowsWorkflow,
+    Workflow,
+    parse_workflow,
+    validate_workflow,
+)
 from .variables import Severity, VariableIssue, analyze_variables
 
 
@@ -65,15 +71,27 @@ def analyze_yaml(yaml_str: str) -> AnalysisResult:
     )
 
 
-def analyze_workflow(workflow: Workflow) -> AnalysisResult:
-    """Full analysis pipeline for a programmatically constructed Workflow.
+def analyze_workflow(workflow: Any) -> AnalysisResult:
+    """Full analysis pipeline for a workflow.
 
-    Validates expressions on the serialized dict and variable references
-    on the Pydantic models, without round-tripping through a YAML string.
+    Accepts either:
+    - A Pydantic ``SimpleWorkflow`` or ``SubworkflowsWorkflow`` instance
+    - Raw workflow data (list of step dicts or dict of workflow definitions)
+      as produced by the builder layer's ``_finalize()``
+
+    Raw data is validated through Pydantic first, then expressions and
+    variable references are checked.
     """
+    # If raw data, validate through Pydantic first
+    if isinstance(workflow, (list, dict)) and not isinstance(
+        workflow, (SimpleWorkflow, SubworkflowsWorkflow)
+    ):
+        workflow = validate_workflow(workflow)
+
     if not isinstance(workflow, (SimpleWorkflow, SubworkflowsWorkflow)):
         raise TypeError(
-            f"Expected SimpleWorkflow or SubworkflowsWorkflow, got {type(workflow)}"
+            f"Expected SimpleWorkflow, SubworkflowsWorkflow, list, or dict — "
+            f"got {type(workflow).__name__}"
         )
 
     raw = workflow.to_dict()

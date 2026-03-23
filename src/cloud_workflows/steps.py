@@ -29,6 +29,10 @@ Step classes:
 
 Each class has a ``build(step_id)`` method that returns a single-entry dict
 ``{step_id: <step_body>}`` ready for YAML serialization.
+
+No Pydantic models are used in this module.  All ``build()`` methods produce
+raw dicts directly, using correct YAML key strings (``"return"``,
+``"raise"``, ``"for"``, ``"in"``, ``"as"``, ``"try"``, ``"except"``).
 """
 
 from __future__ import annotations
@@ -37,25 +41,6 @@ from typing import Any, Dict, List, Optional, Union
 
 from jsonpath_ng import parse as jp_parse
 
-from .models import (
-    AssignStep,
-    Branch,
-    CallStep,
-    ExceptBody,
-    ForBody,
-    ForStep,
-    NestedStepsStep,
-    ParallelBody,
-    ParallelStep,
-    RaiseStep,
-    ReturnStep,
-    Step,
-    SwitchCondition,
-    SwitchStep,
-    TryCallBody,
-    TryStep,
-    TryStepsBody,
-)
 from .retry import Retry
 
 __all__ = [
@@ -76,6 +61,16 @@ __all__ = [
 # Sentinel for "not provided" where None may be valid
 # ---------------------------------------------------------------------------
 _UNSET = object()
+
+
+# ---------------------------------------------------------------------------
+# Layer 1 helpers: pure dict manipulation
+# ---------------------------------------------------------------------------
+
+
+def _strip_none(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a shallow copy of *d* with all None-valued keys removed."""
+    return {k: v for k, v in d.items() if v is not None}
 
 
 # ============================================================================
@@ -183,8 +178,9 @@ class Assign(StepType):
         self._next = next
 
     def build(self, step_id: str) -> Dict[str, Any]:
-        model = AssignStep(assign=self._items, next=self._next)
-        body = model.model_dump(by_alias=True, exclude_none=True)
+        body: Dict[str, Any] = {"assign": self._items}
+        if self._next is not None:
+            body["next"] = self._next
         return {step_id: body}
 
 
@@ -299,13 +295,14 @@ class Call(StepType):
         self._next = next
 
     def build(self, step_id: str) -> Dict[str, Any]:
-        model = CallStep(
-            call=self._func,
-            args=self._args,
-            result=self._result,
-            next=self._next,
+        body = _strip_none(
+            {
+                "call": self._func,
+                "args": self._args,
+                "result": self._result,
+                "next": self._next,
+            }
         )
-        body = model.model_dump(by_alias=True, exclude_none=True)
         return {step_id: body}
 
 
@@ -333,9 +330,7 @@ class Return(StepType):
         self._value = value
 
     def build(self, step_id: str) -> Dict[str, Any]:
-        model = ReturnStep(returns=self._value)
-        body = model.model_dump(by_alias=True, exclude_none=True)
-        return {step_id: body}
+        return {step_id: {"return": self._value}}
 
 
 # ============================================================================
@@ -362,9 +357,7 @@ class Raise(StepType):
         self._value = value
 
     def build(self, step_id: str) -> Dict[str, Any]:
-        model = RaiseStep(raises=self._value)
-        body = model.model_dump(by_alias=True, exclude_none=True)
-        return {step_id: body}
+        return {step_id: {"raise": self._value}}
 
 
 # ============================================================================
@@ -409,22 +402,20 @@ class Condition:
         self.returns = returns
         self.raises = raises
 
-    def _to_model(self) -> SwitchCondition:
-        """Convert to a SwitchCondition Pydantic model."""
-        kwargs: Dict[str, Any] = {"condition": self.condition}
+    def _to_dict(self) -> Dict[str, Any]:
+        """Convert to a plain dict for YAML serialization."""
+        d: Dict[str, Any] = {"condition": self.condition}
         if self.next is not None:
-            kwargs["next"] = self.next
+            d["next"] = self.next
         if self.steps is not None:
-            kwargs["steps"] = _resolve_steps(self.steps)
+            d["steps"] = _resolve_steps(self.steps)
         if self.assign is not None:
-            kwargs["assign"] = self.assign
+            d["assign"] = self.assign
         if self.returns is not _UNSET:
-            # SwitchCondition uses alias "return" for field returns
-            kwargs["return"] = self.returns
+            d["return"] = self.returns
         if self.raises is not _UNSET:
-            # SwitchCondition uses alias "raise" for field raises
-            kwargs["raise"] = self.raises
-        return SwitchCondition(**kwargs)
+            d["raise"] = self.raises
+        return d
 
 
 # ============================================================================
@@ -460,11 +451,11 @@ class Switch(StepType):
         self._next = next
 
     def build(self, step_id: str) -> Dict[str, Any]:
-        model = SwitchStep(
-            switch=[c._to_model() for c in self._conditions],
-            next=self._next,
-        )
-        body = model.model_dump(by_alias=True, exclude_none=True)
+        body: Dict[str, Any] = {
+            "switch": [c._to_dict() for c in self._conditions],
+        }
+        if self._next is not None:
+            body["next"] = self._next
         return {step_id: body}
 
 
@@ -512,17 +503,16 @@ class For(StepType):
 
     def build(self, step_id: str) -> Dict[str, Any]:
         step_dicts = _resolve_steps(self._steps)
-        model = ForStep(
-            loop=ForBody(
-                value=self._value,
-                index=self._index,
-                items=self._items,
-                range=self._range,
-                steps=step_dicts,
-            )
+        for_body = _strip_none(
+            {
+                "value": self._value,
+                "index": self._index,
+                "in": self._items,
+                "range": self._range,
+            }
         )
-        body = model.model_dump(by_alias=True, exclude_none=True)
-        return {step_id: body}
+        for_body["steps"] = step_dicts
+        return {step_id: {"for": for_body}}
 
 
 # ============================================================================
@@ -565,21 +555,20 @@ class Parallel(StepType):
         self._concurrency_limit = concurrency_limit
 
     def build(self, step_id: str) -> Dict[str, Any]:
-        branch_models = []
+        branch_list = []
         for name, steps in self._branches.items():
             step_dicts = _resolve_steps(steps)
-            branch_models.append(Branch(name=name, steps=step_dicts))
+            branch_list.append({name: {"steps": step_dicts}})
 
-        model = ParallelStep(
-            parallel=ParallelBody(
-                branches=branch_models,
-                shared=self._shared,
-                exception_policy=self._exception_policy,
-                concurrency_limit=self._concurrency_limit,
-            )
+        parallel_body = _strip_none(
+            {
+                "shared": self._shared,
+                "exception_policy": self._exception_policy,
+                "concurrency_limit": self._concurrency_limit,
+            }
         )
-        body = model.model_dump(by_alias=True, exclude_none=True)
-        return {step_id: body}
+        parallel_body["branches"] = branch_list
+        return {step_id: {"parallel": parallel_body}}
 
 
 # ============================================================================
@@ -591,9 +580,9 @@ class Try(StepType):
     """Try step — try/retry/except error handling.
 
     The try body is auto-detected:
-    - If ``steps`` contains a single Call step, it produces a ``TryCallBody``
-      (flat call fields in the try block).
-    - Otherwise it produces a ``TryStepsBody`` (nested steps list).
+    - If ``steps`` contains a single Call step, it produces a flat
+      call body (call/args/result fields directly in the try block).
+    - Otherwise it produces a nested steps list.
 
     The error variable is always ``e`` (opinionated).
 
@@ -636,37 +625,39 @@ class Try(StepType):
         # Auto-detect try body type
         try_body = self._build_try_body(step_dicts)
 
-        # Resolve retry
-        retry = self._retry._to_model() if self._retry is not None else None
+        body: Dict[str, Any] = {"try": try_body}
 
-        # Resolve except
-        except_body = self._build_except()
+        # Retry config
+        if self._retry is not None:
+            body["retry"] = self._retry._to_dict()
 
-        model = TryStep(steps=try_body, retry=retry, error_steps=except_body)
-        body = model.model_dump(by_alias=True, exclude_none=True)
+        # Except handler
+        if self._error_steps is not None:
+            except_dicts = _resolve_steps(self._error_steps)
+            body["except"] = {
+                "as": "e",
+                "steps": except_dicts,
+            }
+
         return {step_id: body}
 
     def _build_try_body(self, step_dicts: List[Dict[str, Any]]) -> Any:
-        """Auto-detect whether to use TryCallBody or TryStepsBody."""
+        """Auto-detect whether to use flat call body or nested steps."""
         if len(step_dicts) == 1:
             single = step_dicts[0]
             # Single step — check if it's a call
             step_name = list(single.keys())[0]
             step_body = single[step_name]
             if isinstance(step_body, dict) and "call" in step_body:
-                return TryCallBody(
-                    call=step_body["call"],
-                    args=step_body.get("args"),
-                    result=step_body.get("result"),
+                # Flat call body: extract call/args/result
+                return _strip_none(
+                    {
+                        "call": step_body["call"],
+                        "args": step_body.get("args"),
+                        "result": step_body.get("result"),
+                    }
                 )
-        return TryStepsBody(steps=step_dicts)
-
-    def _build_except(self) -> Optional[ExceptBody]:
-        """Resolve except handler with hardcoded error variable 'e'."""
-        if self._error_steps is None:
-            return None
-        step_dicts = _resolve_steps(self._error_steps)
-        return ExceptBody(alias="e", steps=step_dicts)
+        return {"steps": step_dicts}
 
 
 # ============================================================================
@@ -697,6 +688,7 @@ class NestedSteps(StepType):
 
     def build(self, step_id: str) -> Dict[str, Any]:
         step_dicts = _resolve_steps(self._steps)
-        model = NestedStepsStep(steps=step_dicts, next=self._next)
-        body = model.model_dump(by_alias=True, exclude_none=True)
+        body: Dict[str, Any] = {"steps": step_dicts}
+        if self._next is not None:
+            body["next"] = self._next
         return {step_id: body}

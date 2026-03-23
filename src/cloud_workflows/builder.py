@@ -33,6 +33,9 @@ Write to disk with ``build()``::
 
 ``build()`` always requires a ``dict[str, Steps]`` with a ``"main"`` key
 for each file entry.
+
+No Pydantic models are used in this module.  ``_finalize()`` produces raw
+dicts/lists, and ``build()`` writes YAML via ``yaml.dump()`` directly.
 """
 
 from __future__ import annotations
@@ -46,12 +49,8 @@ from typing import (
     Union,
 )
 
-from .models import (
-    SimpleWorkflow,
-    SubworkflowsWorkflow,
-    Workflow as WorkflowModel,
-    WorkflowDefinition,
-)
+import yaml
+
 from .steps import (
     StepType,
     Assign as _Assign,
@@ -371,7 +370,7 @@ class Steps:
         """Add a Try step.
 
         The try body is auto-detected: a single Call step produces a flat
-        ``TryCallBody``; otherwise a ``TryStepsBody`` is used.
+        call body; otherwise a nested steps list is used.
 
         The error variable is always ``e`` (opinionated).
 
@@ -424,29 +423,60 @@ class Steps:
         """
         return self.step(step_id, _NestedSteps(steps=steps, next=next))
 
-    def _finalize(self) -> Union[SimpleWorkflow, SubworkflowsWorkflow]:
-        """Convert this Steps container into a Pydantic workflow model.
 
-        - If this is a plain Steps (no params), produces SimpleWorkflow.
-        - If params are set, wraps in SubworkflowsWorkflow with a single
-          "main" workflow that has those params.
-        """
-        if not self._steps:
-            raise ValueError("No steps defined")
+# =============================================================================
+# _finalize() — convert Steps dict to raw workflow data
+# =============================================================================
 
-        step_dicts = self.build()
 
-        if self._params is not None:
-            # Has params → SubworkflowsWorkflow
-            return SubworkflowsWorkflow(
-                workflows={
-                    "main": WorkflowDefinition(
-                        params=self._params,
-                        steps=step_dicts,
-                    )
-                }
+def _finalize(
+    value: Any,
+) -> Any:
+    """Convert a build() value to a finalized raw workflow structure.
+
+    Accepts a ``dict[str, Steps]`` with a required ``"main"`` key.
+
+    Returns either:
+    - A ``list`` of step dicts (simple workflow: single "main" without params)
+    - A ``dict`` of workflow definitions (subworkflows or main with params)
+
+    The return value is ready for ``yaml.dump()``.
+    """
+    if not isinstance(value, dict):
+        raise TypeError(f"Expected dict[str, Steps], got {type(value).__name__}")
+
+    if "main" not in value:
+        raise ValueError("Workflow dict must contain a 'main' key")
+
+    # Build raw workflow definitions
+    workflows: Dict[str, Any] = {}
+    for name, steps in value.items():
+        if not isinstance(steps, Steps):
+            raise TypeError(
+                f"Multi-workflow dict values must be Steps instances, "
+                f"got {type(steps).__name__} for key '{name}'"
             )
-        return SimpleWorkflow(steps=step_dicts)
+        if not steps._steps:
+            raise ValueError(f"Workflow '{name}' has no steps")
+
+        wf_def: Dict[str, Any] = {}
+        if steps._params is not None:
+            wf_def["params"] = steps._params
+        wf_def["steps"] = steps.build()
+        workflows[name] = wf_def
+
+    # Single 'main' without params → simple workflow (list of steps)
+    if len(workflows) == 1 and "main" in workflows:
+        main_wf = workflows["main"]
+        if "params" not in main_wf:
+            return main_wf["steps"]
+
+    return workflows
+
+
+def _to_yaml(data: Any) -> str:
+    """Serialize a finalized workflow structure to YAML."""
+    return yaml.dump(data, default_flow_style=False, sort_keys=False)
 
 
 # =============================================================================
@@ -455,7 +485,7 @@ class Steps:
 
 
 def build(
-    workflows: Dict[str, Union[Dict[str, Steps]]],
+    workflows: Dict[str, Dict[str, Steps]],
     output_dir: Union[str, Path] = ".",
 ) -> List[Path]:
     """Build workflow definitions and write them to YAML files.
@@ -503,49 +533,13 @@ def build(
                 f"Workflow filename must be a string, got {type(filename).__name__}"
             )
 
-        # Auto-finalize
-        workflow_model = _finalize(workflow)
+        # Finalize to raw data and dump YAML
+        data = _finalize(workflow)
+        yaml_str = _to_yaml(data)
 
         path = out / filename
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(workflow_model.to_yaml(), encoding="utf-8")
+        path.write_text(yaml_str, encoding="utf-8")
         written.append(path)
 
     return written
-
-
-def _finalize(
-    value: Any,
-) -> Union[SimpleWorkflow, SubworkflowsWorkflow]:
-    """Convert a build() value to a finalized workflow model.
-
-    Accepts a ``dict[str, Steps]`` with a required ``"main"`` key.
-    """
-    if not isinstance(value, dict):
-        raise TypeError(f"Expected dict[str, Steps], got {type(value).__name__}")
-
-    if "main" not in value:
-        raise ValueError("Workflow dict must contain a 'main' key")
-
-    # Dict of name -> Steps for multi-workflow
-    workflows: Dict[str, WorkflowDefinition] = {}
-    for name, steps in value.items():
-        if not isinstance(steps, Steps):
-            raise TypeError(
-                f"Multi-workflow dict values must be Steps instances, "
-                f"got {type(steps).__name__} for key '{name}'"
-            )
-        if not steps._steps:
-            raise ValueError(f"Workflow '{name}' has no steps")
-        workflows[name] = WorkflowDefinition(
-            params=steps._params,
-            steps=steps.build(),
-        )
-
-    # Single 'main' without params → SimpleWorkflow
-    if len(workflows) == 1 and "main" in workflows:
-        main_wf = workflows["main"]
-        if main_wf.params is None:
-            return SimpleWorkflow(steps=main_wf.steps)
-
-    return SubworkflowsWorkflow(workflows=workflows)

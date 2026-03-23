@@ -2,6 +2,7 @@
 
 from .models import (
     parse_workflow,
+    validate_workflow,
     to_yaml,
     expr,
     concat,
@@ -98,8 +99,9 @@ from .consts import (
 )
 
 __all__ = [
-    # Parsing
+    # Parsing / Validation
     "parse_workflow",
+    "validate_workflow",
     "Workflow",
     "SimpleWorkflow",
     "SubworkflowsWorkflow",

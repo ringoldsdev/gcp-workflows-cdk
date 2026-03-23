@@ -1,7 +1,7 @@
 """Retry and backoff configuration for Try steps.
 
-These are builder-layer classes that produce the corresponding Pydantic
-models (``RetryConfig``, ``BackoffConfig``) at build time.
+These are builder-layer classes that produce raw dicts at build time.
+No Pydantic models are used.
 
 Usage::
 
@@ -20,12 +20,7 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any, Optional, Union
-
-from .models import (
-    BackoffConfig as BackoffModel,
-    RetryConfig as RetryModel,
-)
+from typing import Any, Dict, Optional, Union
 
 __all__ = [
     "Retry",
@@ -53,13 +48,13 @@ class Backoff:
         self.max_delay = max_delay
         self.multiplier = multiplier
 
-    def _to_model(self) -> BackoffModel:
-        """Convert to the Pydantic BackoffConfig model."""
-        return BackoffModel(
-            initial_delay=self.initial_delay,
-            max_delay=self.max_delay,
-            multiplier=self.multiplier,
-        )
+    def _to_dict(self) -> Dict[str, Any]:
+        """Convert to a plain dict for YAML serialization."""
+        return {
+            "initial_delay": self.initial_delay,
+            "max_delay": self.max_delay,
+            "multiplier": self.multiplier,
+        }
 
 
 class Retry:
@@ -85,12 +80,12 @@ class Retry:
         self.max_retries = max_retries
         self.backoff = backoff
 
-    def _to_model(self) -> RetryModel:
-        """Convert to the Pydantic RetryConfig model."""
-        kwargs: dict = {
+    def _to_dict(self) -> Dict[str, Any]:
+        """Convert to a plain dict for YAML serialization."""
+        d: Dict[str, Any] = {
             "predicate": self.predicate,
             "max_retries": self.max_retries,
         }
         if self.backoff is not None:
-            kwargs["backoff"] = self.backoff._to_model()
-        return RetryModel(**kwargs)
+            d["backoff"] = self.backoff._to_dict()
+        return d
