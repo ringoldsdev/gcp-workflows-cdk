@@ -1,0 +1,9 @@
+- init:
+    assign:
+      - config:
+          http:
+            timeout: 30
+            retries: 3
+      - my_map["key"]: value1
+      - my_map[dynamic]: value2
+      - simple: true

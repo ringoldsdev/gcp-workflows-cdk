@@ -54,7 +54,8 @@ s.assign("init", x=10, next="process")
 
 #### Dot-path unnesting
 
-Dot-separated keys are automatically expanded into nested dicts:
+Dot-separated keys are automatically expanded into nested dicts.
+Entries sharing the same root key are deep-merged:
 
 ```python
 s.assign("init", {"config.http.timeout": 30, "config.http.retries": 3})
@@ -68,9 +69,53 @@ Produces:
       - config:
           http:
             timeout: 30
-      - config:
-          http:
             retries: 3
+```
+
+#### Bracket/subscript notation
+
+GCP Workflows supports bracket notation on the LHS of assignments for
+dynamic map keys and indexed access.  These keys are emitted verbatim —
+they are **not** dot-expanded or deep-merged:
+
+```python
+# String literal key
+s.assign("init", {'my_map["Key1"]': "Value1"})
+
+# Variable key (runtime expression)
+s.assign("init", {"my_map[key_var]": "Value2"})
+
+# Expression key
+s.assign("init", {'my_map[key_var + "3"]': "Value3"})
+
+# Multiple bracket keys stay as separate entries (never merged)
+s.assign("set_map", {
+    'my_map["Key1"]': "Value1",
+    "my_map[key_var]": "Value2",
+    'my_map[key_var + "3"]': "Value3",
+})
+```
+
+Produces:
+
+```yaml
+- set_map:
+    assign:
+      - my_map["Key1"]: Value1
+      - my_map[key_var]: Value2
+      - my_map[key_var + "3"]: Value3
+```
+
+Bracket notation and dot-paths can be mixed freely.  Dot-path entries
+merge as usual; bracket entries remain separate:
+
+```python
+s.assign("init", {
+    "config.http.timeout": 30,
+    "config.http.retries": 3,
+    'my_map["key"]': "value1",
+    "my_map[dynamic]": "value2",
+})
 ```
 
 ### Call

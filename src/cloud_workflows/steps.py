@@ -145,11 +145,20 @@ class Assign(StepType):
         Assign({"config": {"timeout": 30}})   # nested dict value
         Assign(x=10, next="done")             # with jump target
 
+    Bracket/subscript notation on the LHS is preserved as-is for the
+    GCP Workflows runtime.  These keys are **not** dot-expanded and
+    are **never** deep-merged, even when they share a variable prefix::
+
+        Assign({'my_map["Key1"]': "v1",
+                "my_map[key_var]": "v2"})     # two separate entries
+
     Args:
         mapping: Optional dict of variable assignments.  Keys may use
             dot-separated paths (e.g. ``"a.b.c"``) which are expanded
             into nested dicts.  Nested dict values are also accepted
-            and will be deep-merged when sharing a root key.
+            and will be deep-merged when sharing a root key.  Keys
+            containing bracket notation (e.g. ``'my_map["k"]'``) are
+            emitted verbatim.
         next: Jump target step name.
         **kwargs: Simple variable assignments.
     """
@@ -179,11 +188,27 @@ class Assign(StepType):
         return {step_id: body}
 
 
+def _has_bracket(key: str) -> bool:
+    """Return True if *key* contains bracket/subscript notation.
+
+    Keys like ``my_map["key"]``, ``my_map[var]``, or ``my_map[a + "b"]``
+    are GCP Workflows runtime expressions and must be emitted as-is —
+    no dot-path expansion and no deep-merging.
+    """
+    return "[" in key
+
+
 def _expand_dotpath(key: str, value: Any) -> Dict[str, Any]:
     """Expand a dot-separated key into nested dicts.
 
     ``_expand_dotpath("a.b.c", 1)`` → ``{"a": {"b": {"c": 1}}}``
+
+    Keys containing bracket notation (e.g. ``my_map["key"]``) are
+    returned as-is — they are runtime subscript expressions and must
+    not be parsed or expanded.
     """
+    if _has_bracket(key):
+        return {key: value}
     if "." in key:
         result: Dict[str, Any] = {}
         jp_parse(key).update_or_create(result, value)
@@ -212,12 +237,24 @@ def _merge_assign_items(
 
     Preserves insertion order of first occurrence.  Each input dict is
     expected to be a single-key dict (as produced by ``_expand_dotpath``).
+
+    Keys containing bracket notation (e.g. ``my_map["k"]``,
+    ``my_map[var]``) are **never** merged — each is emitted as a
+    separate assignment entry because they represent runtime subscript
+    operations that cannot be statically combined.
     """
     merged: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
     for item in items:
         root_key = next(iter(item))
-        if root_key not in merged:
+        # Bracket-notation keys are opaque — never merge them.
+        if _has_bracket(root_key):
+            # Use a unique sentinel so each bracket key stays separate.
+            # We append directly to order and store under a unique id.
+            uid = f"__bracket_{len(order)}__"
+            merged[uid] = item
+            order.append(uid)
+        elif root_key not in merged:
             merged[root_key] = item
             order.append(root_key)
         else:

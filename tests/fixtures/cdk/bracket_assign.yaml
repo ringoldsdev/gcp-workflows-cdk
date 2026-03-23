@@ -1,0 +1,5 @@
+- init:
+    assign:
+      - my_map["Key1"]: Value1
+      - my_map[key_var]: Value2
+      - my_map[key_var + "3"]: Value3

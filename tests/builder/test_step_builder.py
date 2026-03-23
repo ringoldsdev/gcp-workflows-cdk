@@ -843,6 +843,104 @@ class TestDotPathUnnesting:
 
 
 # =============================================================================
+# Bracket/subscript notation in Assign LHS
+# =============================================================================
+
+
+class TestBracketNotation:
+    """Bracket-notation keys are preserved as-is (no dot expansion, no merging)."""
+
+    def test_bracket_string_literal(self):
+        """my_map["Key1"] is emitted as a single opaque key."""
+        s = Steps()
+        s.step("init", Assign({'my_map["Key1"]': "Value1"}))
+        d = _to_dict(s)
+        assert d == [{"init": {"assign": [{'my_map["Key1"]': "Value1"}]}}]
+
+    def test_bracket_variable(self):
+        """my_map[key_var] is emitted as a single opaque key."""
+        s = Steps()
+        s.step("init", Assign({"my_map[key_var]": "Value2"}))
+        d = _to_dict(s)
+        assert d == [{"init": {"assign": [{"my_map[key_var]": "Value2"}]}}]
+
+    def test_bracket_expression(self):
+        """my_map[key_var + "3"] is emitted as a single opaque key."""
+        s = Steps()
+        s.step("init", Assign({'my_map[key_var + "3"]': "Value3"}))
+        d = _to_dict(s)
+        assert d == [{"init": {"assign": [{'my_map[key_var + "3"]': "Value3"}]}}]
+
+    def test_bracket_keys_not_merged(self):
+        """Multiple bracket keys sharing a variable prefix stay separate."""
+        s = Steps()
+        s.step(
+            "init",
+            Assign(
+                {
+                    'my_map["Key1"]': "Value1",
+                    "my_map[key_var]": "Value2",
+                    'my_map[key_var + "3"]': "Value3",
+                }
+            ),
+        )
+        d = _to_dict(s)
+        expected = yaml.safe_load(load_fixture("cdk", "bracket_assign.yaml"))
+        assert d == expected
+
+    def test_bracket_mixed_with_dotpath(self):
+        """Bracket keys and dot-paths coexist; dot-paths merge, brackets don't."""
+        s = Steps()
+        s.step(
+            "init",
+            Assign(
+                {
+                    "config.http.timeout": 30,
+                    "config.http.retries": 3,
+                    'my_map["key"]': "value1",
+                    "my_map[dynamic]": "value2",
+                },
+                simple=True,
+            ),
+        )
+        d = _to_dict(s)
+        expected = yaml.safe_load(load_fixture("cdk", "bracket_mixed.yaml"))
+        assert d == expected
+
+    def test_bracket_with_dot_prefix(self):
+        """A key like obj.field[idx] (dot + bracket) is treated as opaque."""
+        s = Steps()
+        s.step("init", Assign({"obj.field[idx]": 42}))
+        d = _to_dict(s)
+        assert d == [{"init": {"assign": [{"obj.field[idx]": 42}]}}]
+
+    def test_bracket_no_merge_with_plain_key(self):
+        """my_map[x] does NOT merge with a plain 'my_map' assignment."""
+        s = Steps()
+        s.step(
+            "init",
+            Assign(
+                {
+                    "my_map": {"static_key": "val"},
+                    "my_map[dynamic]": "dyn_val",
+                }
+            ),
+        )
+        d = _to_dict(s)
+        assign_list = d[0]["init"]["assign"]
+        assert len(assign_list) == 2
+        assert assign_list[0] == {"my_map": {"static_key": "val"}}
+        assert assign_list[1] == {"my_map[dynamic]": "dyn_val"}
+
+    def test_bracket_index_numeric(self):
+        """Numeric subscripts like items[0] are preserved as-is."""
+        s = Steps()
+        s.step("init", Assign({"items[0]": "first"}))
+        d = _to_dict(s)
+        assert d == [{"init": {"assign": [{"items[0]": "first"}]}}]
+
+
+# =============================================================================
 # Mixed construction
 # =============================================================================
 
