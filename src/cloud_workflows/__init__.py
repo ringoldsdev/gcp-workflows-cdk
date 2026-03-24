@@ -1,4 +1,9 @@
-"""Cloud Workflows YAML validator and builder using Pydantic v2."""
+"""Cloud Workflows CDK — build, validate, and serialize Google Cloud Workflows YAML.
+
+The builder (Layers 1-2) produces raw Python dicts with no Pydantic involvement.
+Validation (Layer 3) is opt-in via validate_workflow() or analyze_workflow().
+Output (Layer 4) serializes raw dicts to YAML via yaml.dump().
+"""
 
 from .models import (
     parse_workflow,

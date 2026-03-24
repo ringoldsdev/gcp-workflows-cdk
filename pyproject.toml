@@ -1,7 +1,7 @@
 [project]
 name = "cloud-workflows-generator"
 version = "0.1.0"
-description = "Pydantic v2 YAML validator for Google Cloud Workflows syntax"
+description = "Python CDK for Google Cloud Workflows — build, validate, and emit YAML"
 requires-python = ">=3.14"
 dependencies = [
     "pydantic>=2.0",

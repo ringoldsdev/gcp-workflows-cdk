@@ -391,26 +391,31 @@ s = (Steps()
 build({"workflow.yaml": {"main": s}})
 ```
 
-A single `"main"` without params produces `SimpleWorkflow` (flat list). Multiple workflows or params produce `SubworkflowsWorkflow` (dict of named workflows).
+A single `"main"` without params produces a flat step list. Multiple workflows or params produce a dict of named workflow definitions.
 
 ## Validation
 
-Every workflow can be validated against the full GCP Workflows spec: structural rules, expression syntax, and variable resolution.
+Every workflow can be validated against the full GCP Workflows spec: structural rules, expression syntax, and variable resolution. The builder produces raw dicts — validation is opt-in.
 
 ```python
-from cloud_workflows import analyze_workflow, analyze_yaml
+from cloud_workflows import analyze_workflow, analyze_yaml, validate_workflow
+from cloud_workflows.builder import _finalize
 
 # Validate a builder-constructed workflow
-result = analyze_workflow(s._finalize())
-print(result.is_valid)          # True / False
-print(result.errors)            # list of errors (expression + variable)
-print(result.warnings)          # list of warnings (e.g. conditionally-defined variables)
+data = _finalize({"main": s})           # raw list or dict
+result = analyze_workflow(data)          # full 3-stage pipeline
+print(result.is_valid)                   # True / False
+print(result.errors)                     # list of errors (expression + variable)
+print(result.warnings)                   # list of warnings
+
+# Structural validation only (Pydantic)
+model = validate_workflow(data)          # returns a Workflow model
 
 # Validate raw YAML
 result = analyze_yaml(open("workflow.yaml").read())
 print(result.is_valid)
-print(result.expression_errors) # list of ExpressionError
-print(result.variable_issues)   # list of VariableIssue
+print(result.expression_errors)          # list of ExpressionError
+print(result.variable_issues)            # list of VariableIssue
 ```
 
 The analysis pipeline runs three stages:
@@ -419,9 +424,24 @@ The analysis pipeline runs three stages:
 2. **Expression** — A Pratt parser validates every `${...}` expression for correct syntax
 3. **Variable** — Scope-based analysis checks that every referenced variable is defined before use
 
+## Architecture
+
+The codebase is organized into four layers with strict separation of concerns:
+
+| Layer | Responsibility | Modules | Pydantic? |
+|---|---|---|---|
+| **1. Core** | Dict utilities (`_strip_none`, `_expand_dotpath`, `_deep_merge`) | `steps.py` (private) | No |
+| **2. Business** | Step classes, `Steps` container, `_finalize()` | `steps.py`, `builder.py`, `retry.py` | No |
+| **3. Validation** | Structural validation, expression parsing, variable analysis | `models.py`, `parser.py`, `expressions.py`, `variables.py` | Yes |
+| **4. Output** | `yaml.dump()` on raw dicts | `builder.py` (`build()`) | No |
+
+The builder (Layers 1-2) produces raw Python dicts with zero Pydantic involvement. Validation (Layer 3) is independent and opt-in. Output (Layer 4) serializes raw dicts to YAML.
+
+For the full architecture, see [ARCHITECTURE.md](./ARCHITECTURE.md).
+
 ## Advanced: Using Pydantic Models Directly
 
-The builder API is syntactic sugar over Pydantic model classes. For maximum control, construct models directly:
+The Layer 3 Pydantic models can be constructed directly for maximum control over validation:
 
 ```python
 from cloud_workflows import (

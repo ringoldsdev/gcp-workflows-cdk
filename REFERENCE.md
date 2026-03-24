@@ -61,7 +61,8 @@ Everything is importable from `cloud_workflows`.
 | Function | Description |
 |---|---|
 | `analyze_yaml(yaml_str)` | Parse YAML + validate expressions + analyze variables. Returns `AnalysisResult` |
-| `analyze_workflow(workflow)` | Same as `analyze_yaml` but takes a model (no YAML round-trip) |
+| `analyze_workflow(data)` | Same as `analyze_yaml` but takes raw data (list/dict from builder) or a Pydantic model (no YAML round-trip) |
+| `validate_workflow(data)` | Structural validation only. Takes raw data, returns a validated Pydantic `Workflow` model |
 
 `AnalysisResult` fields:
 
@@ -135,7 +136,6 @@ s = (Steps()
 | `s.step("name", step)` | Add a named step. `step` must be a `StepType` instance. Returns `self`. |
 | `s.merge(other)` | Merge all steps from another `Steps` instance (appends in order). Returns `self`. |
 | `s.build()` | Serialize to `list[dict]` — each entry is `{step_id: body}`. |
-| `s._finalize()` | Convert to a Pydantic workflow model (`SimpleWorkflow` or `SubworkflowsWorkflow`). |
 | `len(s)` | Number of steps. |
 
 Constructor:
@@ -365,6 +365,20 @@ s.loop("loop",
 )
 ```
 
+### _finalize() Function
+
+```python
+_finalize(workflow_dict: dict[str, Steps]) -> list | dict
+```
+
+Converts a `dict[str, Steps]` with a required `"main"` key into raw workflow data:
+
+| Type | Behavior |
+|---|---|
+| `dict[str, Steps]` with only `"main"` (no params) | Returns a `list` (flat step list). |
+| `dict[str, Steps]` with `"main"` + other keys | Returns a `dict` of named workflow definitions. |
+| `dict[str, Steps]` with `"main"` having params | Returns a `dict` of named workflow definitions. |
+
 ### build() Function
 
 ```python
@@ -373,13 +387,13 @@ build(workflows: dict[str, dict[str, Steps]], output_dir: str | Path = ".") -> l
 
 Writes each `{filename: {name: Steps}}` entry as a YAML file to `output_dir`. Creates directories as needed. Returns the list of written file paths.
 
-Each workflow value must be a `dict[str, Steps]` with a required `"main"` key:
+Each workflow value must be a `dict[str, Steps]` with a required `"main"` key. Internally calls `_finalize()` and `yaml.dump()`:
 
 | Type | Behavior |
 |---|---|
-| `dict[str, Steps]` with only `"main"` (no params) | Produces `SimpleWorkflow` (flat step list). |
-| `dict[str, Steps]` with `"main"` + other keys | Produces `SubworkflowsWorkflow` (named workflows). |
-| `dict[str, Steps]` with `"main"` having params | Produces `SubworkflowsWorkflow`. |
+| `dict[str, Steps]` with only `"main"` (no params) | Produces flat step list YAML. |
+| `dict[str, Steps]` with `"main"` + other keys | Produces named workflows YAML. |
+| `dict[str, Steps]` with `"main"` having params | Produces named workflows YAML. |
 
 ### Composition
 
@@ -407,7 +421,9 @@ main = (Steps()
 
 ---
 
-## Pydantic Models
+## Pydantic Models (Layer 3)
+
+The Pydantic models live in Layer 3 (Validation). They are used by `validate_workflow()`, `parse_workflow()`, and `analyze_workflow()` for structural validation. The builder (Layer 2) does **not** use these models — it produces raw dicts directly.
 
 All models use `model_dump(by_alias=True, exclude_none=True)` for serialization. `Step` and `Branch` have custom `@model_serializer` decorators to handle their single-key dict format.
 
@@ -478,36 +494,46 @@ Python reserved words use descriptive suffixes as field names. Pydantic aliases 
 
 ## Architecture
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full builder pipeline, step class design, and validation pipeline diagrams.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full 4-layer separation of concerns, builder pipeline, and validation pipeline diagrams.
+
+### Layer Overview
+
+| Layer | Responsibility | Modules | Pydantic? |
+|---|---|---|---|
+| **1. Core** | Dict utilities (`_strip_none`, `_expand_dotpath`, `_deep_merge`) | `steps.py` (private) | No |
+| **2. Business** | Step classes, `Steps` container, `_finalize()` | `steps.py`, `builder.py`, `retry.py` | No |
+| **3. Validation** | Structural validation, expression parsing, variable analysis | `models.py`, `parser.py`, `expressions.py`, `variables.py` | Yes |
+| **4. Output** | `yaml.dump()` on raw dicts | `builder.py` (`build()`) | No |
 
 ### Module Map
 
 ```
 src/cloud_workflows/
-    __init__.py       Public API re-exports
-    models.py         Pydantic v2 models + serialization
-    expressions.py    Pratt parser for ${...} expressions
-    variables.py      Scope-based variable tracking
-    parser.py         Analysis pipeline (analyze_yaml, analyze_workflow)
-    builder.py        Steps container + build() function
-    steps.py          StepType base + step classes (Assign, Call, Switch, etc.)
-    retry.py          Retry + Backoff builder classes
+    __init__.py       Public API re-exports (72 symbols)
+    steps.py          Layer 1+2: dict utilities + step classes (Assign, Call, etc.)
+    builder.py        Layer 2+4: Steps container, _finalize(), build() → YAML files
+    retry.py          Layer 2: Retry + Backoff builder classes
+    models.py         Layer 3: Pydantic v2 models, validate_workflow(), parse_workflow()
+    parser.py         Layer 3: analyze_yaml(), analyze_workflow()
+    expressions.py    Layer 3: Pratt parser for ${...} expressions
+    variables.py      Layer 3: Scope-based variable tracking
+    consts.py         Constants: STDLIB_FUNCTIONS, RETRY_PREDICATES, etc.
 ```
 
 ### Processing Pipeline
 
-`analyze_yaml(yaml_str)` and `analyze_workflow(workflow)` run three stages:
+`analyze_yaml(yaml_str)` and `analyze_workflow(data)` run three stages. `analyze_workflow()` accepts raw dicts/lists (from the builder) or Pydantic model objects.
 
 ```
-                  YAML string / Workflow model
-                              |
-                              v
+                   YAML string / raw data / Workflow model
+                               |
+                               v
             +-----------------------------------+
             |  Stage 1: Structural Validation   |
             |  (models.py -- Pydantic v2)       |
             |                                   |
-            |  yaml.safe_load() + Pydantic      |
-            |  model validation: types, field   |
+            |  Raw data validated through       |
+            |  Pydantic: types, field           |
             |  constraints, mutual exclusivity  |
             |  Output: Workflow model tree       |
             +-----------------------------------+
@@ -540,7 +566,9 @@ src/cloud_workflows/
                         AnalysisResult
 ```
 
-Stage 2 operates on **raw YAML** (Python dicts/lists from `yaml.safe_load`) to see literal `${...}` strings before Pydantic stores them as opaque `Any` values. Stage 3 operates on the **Pydantic model tree** to access typed step structures.
+Stage 2 operates on **raw YAML** (Python dicts/lists from `yaml.safe_load` or from the builder) to see literal `${...}` strings before Pydantic stores them as opaque `Any` values. Stage 3 operates on the **Pydantic model tree** to access typed step structures.
+
+The builder pipeline (Layers 1-2-4) and validation pipeline (Layer 3) are **independent**. The builder produces raw dicts with no Pydantic involvement. Validation is opt-in via `analyze_workflow()` or `validate_workflow()`.
 
 ---
 
@@ -683,19 +711,21 @@ cloud-workflows-generator/
         03_error_handling.md    Try/except/retry/raise
         04_control_flow.md      Switch, for, parallel, jumps
         05_data_model.md        Variables, expressions, data types, functions
-        06_pydantic_design.md   Pydantic model design spec
+        06_pydantic_design.md   Pydantic model design spec (Layer 3)
         07_test_fixtures.md     YAML test examples and conventions
     src/cloud_workflows/
-        __init__.py             Public API re-exports
-        models.py               Pydantic v2 models + serialization
-        expressions.py          Pratt parser for ${...} expressions
-        variables.py            Scope-based variable tracking
-        parser.py               Analysis pipeline functions
-        builder.py              Steps container + build() function
-        steps.py                StepType base + step classes
-        retry.py                Retry + Backoff builder classes
+        __init__.py             Public API re-exports (72 symbols)
+        steps.py                Layer 1+2: dict utilities + step classes
+        builder.py              Layer 2+4: Steps container, _finalize(), build()
+        retry.py                Layer 2: Retry + Backoff builder classes
+        models.py               Layer 3: Pydantic v2 models + validate_workflow()
+        expressions.py          Layer 3: Pratt parser for ${...} expressions
+        variables.py            Layer 3: Scope-based variable tracking
+        parser.py               Layer 3: analyze_yaml(), analyze_workflow()
+        consts.py               Constants: stdlib functions, retry predicates
     tests/
         conftest.py             Shared test helpers
+        test_consts.py          Constants tests
         validation/             YAML parsing + validation tests
             test_top_level.py
             test_assign.py
@@ -715,8 +745,9 @@ cloud-workflows-generator/
             test_workflow_builder.py
             test_cdk.py
             test_build.py
-        fixtures/               YAML fixture files (99 files, 14 directories)
+        fixtures/               YAML fixture files (100+ files, 15 directories)
             assign/
+            build/
             call/
             cdk/
             expressions/
@@ -737,4 +768,4 @@ cloud-workflows-generator/
 PYTHONPATH=src python -m pytest tests/ -v
 ```
 
-410 tests + 62 alias method tests = 472 total: validation/CDK + builder (step builder + alias methods + workflow builder + build).
+558 tests: validation, CDK, builder (step builder, alias methods, workflow builder, build), constants.
