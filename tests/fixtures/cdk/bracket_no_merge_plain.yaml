@@ -1,0 +1,5 @@
+- init:
+    assign:
+    - my_map:
+        static_key: val
+    - my_map[dynamic]: dyn_val

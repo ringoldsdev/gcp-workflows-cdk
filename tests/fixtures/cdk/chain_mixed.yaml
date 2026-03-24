@@ -1,0 +1,9 @@
+- init:
+    assign:
+    - x: 10
+- log:
+    call: sys.log
+    args:
+      text: ${x}
+- done:
+    return: ${x}

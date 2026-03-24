@@ -1,0 +1,10 @@
+- safe:
+    try:
+      call: http.get
+      args:
+        url: https://example.com
+    except:
+      as: e
+      steps:
+      - handle:
+          raise: ${e}

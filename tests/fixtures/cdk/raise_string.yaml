@@ -1,0 +1,2 @@
+- fail:
+    raise: something went wrong

@@ -1,0 +1,5 @@
+- init:
+    assign:
+    - x: 10
+- done:
+    return: ${x}

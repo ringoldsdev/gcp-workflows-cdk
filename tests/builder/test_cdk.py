@@ -48,7 +48,12 @@ from cloud_workflows import (
     analyze_workflow,
 )
 
-from conftest import load_fixture, parse_fixture, FIXTURES_DIR
+from conftest import (
+    load_fixture,
+    parse_fixture,
+    FIXTURES_DIR,
+    assert_passes_analysis,
+)
 
 
 # =============================================================================
@@ -70,22 +75,6 @@ def assert_yaml_matches_fixture(workflow, *fixture_path_parts):
         f"YAML mismatch for fixture {'/'.join(fixture_path_parts)}:\n"
         f"  expected: {expected}\n"
         f"  actual:   {actual}"
-    )
-
-
-def assert_passes_analysis(workflow):
-    """Assert that analyze_workflow() and analyze_yaml() both pass."""
-    # Direct model analysis (no YAML round-trip)
-    result = analyze_workflow(workflow)
-    assert result.is_valid, f"analyze_workflow failed:\n  errors: {result.errors}"
-
-    # YAML round-trip analysis
-    yaml_str = workflow.to_yaml()
-    result2 = analyze_yaml(yaml_str)
-    assert result2.is_valid, (
-        f"analyze_yaml failed on serialized YAML:\n"
-        f"  errors: {result2.errors}\n"
-        f"  yaml:\n{yaml_str}"
     )
 
 

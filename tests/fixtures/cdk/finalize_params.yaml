@@ -1,0 +1,6 @@
+main:
+  params:
+  - input
+  steps:
+  - done:
+      return: ok

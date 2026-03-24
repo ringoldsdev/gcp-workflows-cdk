@@ -1,0 +1,5 @@
+- check:
+    switch:
+    - condition: ${x > 0}
+      next: positive
+    next: fallback

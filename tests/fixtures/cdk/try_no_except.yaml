@@ -1,0 +1,8 @@
+- safe:
+    try:
+      call: http.get
+      args:
+        url: https://example.com
+    retry:
+      predicate: http.default_retry
+      max_retries: 3

@@ -1,0 +1,9 @@
+- s1:
+    assign:
+    - x: 10
+- s2:
+    call: sys.log
+    args:
+      text: ${x}
+- s3:
+    return: ${x}

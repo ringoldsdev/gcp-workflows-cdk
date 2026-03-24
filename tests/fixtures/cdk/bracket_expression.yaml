@@ -1,0 +1,3 @@
+- init:
+    assign:
+    - my_map[key_var + "3"]: Value3

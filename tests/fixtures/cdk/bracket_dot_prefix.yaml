@@ -1,0 +1,3 @@
+- init:
+    assign:
+    - obj.field[idx]: 42

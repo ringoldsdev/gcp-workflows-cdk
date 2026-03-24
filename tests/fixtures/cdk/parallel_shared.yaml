@@ -1,0 +1,15 @@
+- work:
+    parallel:
+      shared:
+      - result
+      branches:
+      - b1:
+          steps:
+          - b1_step:
+              assign:
+              - result: 1
+      - b2:
+          steps:
+          - b2_step:
+              assign:
+              - result: 2

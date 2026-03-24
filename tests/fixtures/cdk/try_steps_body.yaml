@@ -1,0 +1,10 @@
+- safe:
+    try:
+      steps:
+      - init:
+          assign:
+          - x: 1
+      - log:
+          call: sys.log
+          args:
+            text: ${x}

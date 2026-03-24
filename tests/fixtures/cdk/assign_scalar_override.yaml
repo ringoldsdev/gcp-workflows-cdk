@@ -1,0 +1,4 @@
+- init:
+    assign:
+    - config:
+        timeout: 30

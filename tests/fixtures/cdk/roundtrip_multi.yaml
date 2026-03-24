@@ -1,0 +1,11 @@
+main:
+  steps:
+  - s1:
+      call: helper
+      result: r
+  - s2:
+      return: ${r}
+helper:
+  steps:
+  - s1:
+      return: ok

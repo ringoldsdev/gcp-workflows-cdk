@@ -1,0 +1,8 @@
+- group:
+    steps:
+    - inner:
+        assign:
+        - x: 1
+    - done:
+        return: ${x}
+    next: end

@@ -1,0 +1,5 @@
+- group:
+    steps:
+    - inner:
+        assign:
+        - x: 1

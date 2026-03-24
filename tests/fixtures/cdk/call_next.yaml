@@ -1,0 +1,5 @@
+- log:
+    call: sys.log
+    args:
+      text: hello
+    next: done

@@ -1,0 +1,9 @@
+- init:
+    assign:
+    - status: starting
+- log:
+    call: sys.log
+    args:
+      text: workflow started
+- done:
+    return: ok

@@ -1,0 +1,12 @@
+- loop:
+    for:
+      value: item
+      in:
+      - a
+      - b
+      - c
+      steps:
+      - log:
+          call: sys.log
+          args:
+            text: ${item}

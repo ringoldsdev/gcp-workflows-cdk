@@ -1,0 +1,4 @@
+- init:
+    assign:
+    - x: 10
+    - map["key"]: value

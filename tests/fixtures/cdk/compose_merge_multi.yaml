@@ -1,0 +1,8 @@
+- s1:
+    assign:
+    - x: 1
+- s2:
+    assign:
+    - y: 2
+- done:
+    return: ${x + y}

@@ -769,4 +769,4 @@ cloud-workflows-generator/
 PYTHONPATH=src python -m pytest tests/ -v
 ```
 
-564 tests: validation, CDK, builder (step builder, alias methods, workflow builder, build), constants.
+569 tests: validation, CDK, builder (step builder + alias methods, workflow builder, build), constants.

@@ -1,0 +1,5 @@
+- setup:
+    assign:
+    - initialized: true
+- done:
+    return: ${initialized}

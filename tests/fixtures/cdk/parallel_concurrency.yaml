@@ -1,0 +1,14 @@
+- p:
+    parallel:
+      concurrency_limit: 2
+      branches:
+      - b1:
+          steps:
+          - x:
+              assign:
+              - a: 1
+      - b2:
+          steps:
+          - y:
+              assign:
+              - b: 2
