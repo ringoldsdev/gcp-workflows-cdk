@@ -162,7 +162,8 @@ All alias methods take `step_id` as their first argument, then mirror the corres
 | `.loop(step_id, *, value, items?, range?, index?, steps)` | `For` | For-loop iteration. |
 | `.parallel(step_id, *, branches, shared?, exception_policy?, concurrency_limit?)` | `Parallel` | Parallel branches. |
 | `.do_try(step_id, *, steps, retry?, error_steps?)` | `Try` | Try/retry/except. Named `do_try` to avoid Python keyword `try`. |
-| `.nested(step_id, *, steps, next?)` | `NestedSteps` | Nested step group. |
+| `.nested(step_id, *, steps, next?)` | `NestedSteps` | Nested step group. Alias for `.steps()`. |
+| `.steps(step_id, *, steps, next?)` | `NestedSteps` | Nested step group. Alias for `.nested()`. |
 
 Example with full chaining:
 
@@ -355,7 +356,7 @@ NestedSteps(*, steps, next=None)
 
 ### Callables for Inline Steps
 
-Wherever a compound step accepts a `steps` parameter (`.loop()`, `.parallel()` branches, `.do_try()`, `.switch()` conditions, `.nested()`), you can pass a callable instead of a `Steps` instance. The callable receives a fresh `Steps` and its return value is ignored:
+Wherever a compound step accepts a `steps` parameter (`.loop()`, `.parallel()` branches, `.do_try()`, `.switch()` conditions, `.nested()` / `.steps()`), you can pass a callable instead of a `Steps` instance. The callable receives a fresh `Steps` and its return value is ignored:
 
 ```python
 s.loop("loop",
@@ -768,4 +769,4 @@ cloud-workflows-generator/
 PYTHONPATH=src python -m pytest tests/ -v
 ```
 
-558 tests: validation, CDK, builder (step builder, alias methods, workflow builder, build), constants.
+564 tests: validation, CDK, builder (step builder, alias methods, workflow builder, build), constants.

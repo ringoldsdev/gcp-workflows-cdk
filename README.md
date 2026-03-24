@@ -233,7 +233,9 @@ inner = (Steps()
     .call("step_a", "sys.log", args={"text": "a"})
     .call("step_b", "sys.log", args={"text": "b"}))
 
+# .nested() and .steps() are interchangeable aliases
 s.nested("group", steps=inner, next="done")
+s.steps("group", steps=inner, next="done")
 ```
 
 ## Expression Helpers
@@ -317,7 +319,7 @@ main = (Steps()
 
 ### Callables for Inline Steps
 
-Compound steps (`.loop()`, `.parallel()`, `.do_try()`, `.switch()`, `.nested()`) accept callables wherever they take a `steps` parameter. The callable receives a fresh `Steps` instance:
+Compound steps (`.loop()`, `.parallel()`, `.do_try()`, `.switch()`, `.nested()` / `.steps()`) accept callables wherever they take a `steps` parameter. The callable receives a fresh `Steps` instance:
 
 ```python
 s.loop("loop",

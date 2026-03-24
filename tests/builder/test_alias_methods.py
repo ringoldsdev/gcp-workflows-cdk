@@ -568,8 +568,55 @@ class TestNestedAlias:
 
 
 # =============================================================================
-# Chaining — multiple aliases in one chain
+# .steps()
 # =============================================================================
+
+
+class TestStepsAlias:
+    """Tests for Steps.steps() alias method — identical to .nested()."""
+
+    def test_basic_steps(self):
+        inner = Steps().assign("inner1", x=1).returns("inner2", expr("x"))
+        s = Steps().steps("group", steps=inner, next="done")
+        expected = yaml.safe_load(load_fixture("cdk", "alias_nested.yaml"))
+        assert s.build() == expected
+
+    def test_without_next(self):
+        inner = Steps().assign("inner", x=1)
+        s = Steps().steps("group", steps=inner)
+        d = _to_dict(s)
+        assert "next" not in d[0]["group"]
+
+    def test_with_lambda(self):
+        s = Steps().steps(
+            "group",
+            steps=lambda s: s.assign("inner", x=1).returns("done", expr("x")),
+            next="end",
+        )
+        d = _to_dict(s)
+        assert d[0]["group"]["steps"] == [
+            {"inner": {"assign": [{"x": 1}]}},
+            {"done": {"return": "${x}"}},
+        ]
+
+    def test_equivalent_to_step(self):
+        inner = Steps().assign("inner", x=1)
+        alias = Steps().steps("group", steps=inner)
+        explicit = Steps().step("group", NestedSteps(steps=inner))
+        assert alias.build() == explicit.build()
+
+    def test_equivalent_to_nested(self):
+        """`.steps()` and `.nested()` produce identical output."""
+        inner = Steps().assign("inner1", x=1).returns("inner2", expr("x"))
+        via_steps = Steps().steps("group", steps=inner, next="done")
+        via_nested = Steps().nested("group", steps=inner, next="done")
+        assert via_steps.build() == via_nested.build()
+
+    def test_returns_self(self):
+        inner = Steps().assign("x", a=1)
+        s = Steps()
+        result = s.steps("group", steps=inner)
+        assert result is s
 
 
 class TestAliasChaining:

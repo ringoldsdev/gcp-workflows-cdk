@@ -406,6 +406,8 @@ class Steps:
     ) -> "Steps":
         """Add a NestedSteps step — group steps under a single step name.
 
+        Alias for ``.steps()``.
+
         Args:
             step_id: Unique identifier for this step.
             steps: Nested steps (``Steps`` container or list).
@@ -420,6 +422,34 @@ class Steps:
                 .nested("group",
                         steps=inner_steps,
                         next="done"))
+        """
+        return self.step(step_id, _NestedSteps(steps=steps, next=next))
+
+    def steps(
+        self,
+        step_id: str,
+        *,
+        steps: Any,
+        next: Optional[str] = None,
+    ) -> "Steps":
+        """Add a NestedSteps step — group steps under a single step name.
+
+        Alias for ``.nested()``.
+
+        Args:
+            step_id: Unique identifier for this step.
+            steps: Nested steps (``Steps`` container or list).
+            next: Jump target step name.
+
+        Returns:
+            ``self`` for method chaining.
+
+        Example::
+
+            (Steps()
+                .steps("group",
+                       steps=inner_steps,
+                       next="done"))
         """
         return self.step(step_id, _NestedSteps(steps=steps, next=next))
 
